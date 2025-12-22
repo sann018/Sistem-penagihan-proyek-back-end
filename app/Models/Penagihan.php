@@ -9,14 +9,25 @@ class Penagihan extends Model
 {
     use HasFactory;
 
+    protected $table = 'penagihan';
+    
+    /**
+     * Nama kolom timestamp custom
+     */
+    const CREATED_AT = 'dibuat_pada';
+    const UPDATED_AT = 'diperbarui_pada';
+    const DELETED_AT = 'dihapus_pada';
+
     protected $fillable = [
         'nama_proyek',
         'nama_mitra',
         'pid',
+        'jenis_po',
         'nomor_po',
         'phase',
         'status_ct',
         'status_ut',
+        'rekap_boq',
         'rekon_nilai',
         'rekon_material',
         'pelurusan_material',
@@ -38,15 +49,14 @@ class Penagihan extends Model
     ];
 
     protected $attributes = [
-        'status_ct' => 'BELUM CT',
-        'status_ut' => 'BELUM UT',
-        'rekon_material' => 'BELUM REKON',
-        'pelurusan_material' => 'BELUM LURUS',
-        'status_procurement' => 'ANTRI PERIV',
+        'status_ct' => 'Belum CT',
+        'status_ut' => 'Belum UT',
+        'rekap_boq' => 'Belum Rekap',
+        'rekon_material' => 'Belum Rekon',
+        'pelurusan_material' => 'Belum Lurus',
+        'status_procurement' => 'Antri Periv',
         'status' => 'pending',
     ];
-
-    protected $table = 'penagihan';
 
     public function isOverdue(): bool
     {

@@ -18,8 +18,8 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
+            'email' => 'required|string|email|max:255|unique:pengguna',
+            'password' => 'required|string|min:6',
         ]);
 
         if ($validator->fails()) {
@@ -31,10 +31,14 @@ class AuthController extends Controller
         }
 
         $user = User::create([
-            'name' => $request->name,
+            'nama' => $request->name,
             'email' => $request->email,
-            'password' => Hash::make($request->password),
+            'kata_sandi' => Hash::make($request->password),
+            'peran' => 'read_only', // Default role untuk user baru (hanya bisa lihat)
         ]);
+
+        // Send email verification
+        // $user->sendEmailVerificationNotification();
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
@@ -42,7 +46,13 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'User registered successfully',
             'data' => [
-                'user' => $user,
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->nama,  // Map ke format frontend
+                    'email' => $user->email,
+                    'role' => $user->peran, // Map ke format frontend
+                    'created_at' => $user->dibuat_pada,
+                ],
                 'token' => $token,
             ]
         ], 201);
@@ -68,7 +78,7 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (!$user || !Hash::check($request->password, $user->kata_sandi)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Email atau password salah'
@@ -81,7 +91,13 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Login successful',
             'data' => [
-                'user' => $user,
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->nama,  // Map ke format frontend
+                    'email' => $user->email,
+                    'role' => $user->peran, // Map ke format frontend
+                    'created_at' => $user->dibuat_pada,
+                ],
                 'token' => $token,
             ]
         ]);
@@ -105,9 +121,17 @@ class AuthController extends Controller
      */
     public function me(Request $request): JsonResponse
     {
+        $user = $request->user();
+        
         return response()->json([
             'success' => true,
-            'data' => $request->user()
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->nama,
+                'email' => $user->email,
+                'role' => $user->peran,
+                'created_at' => $user->dibuat_pada,
+            ]
         ]);
     }
 }

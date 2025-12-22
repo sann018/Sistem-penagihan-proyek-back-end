@@ -17,74 +17,106 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Create admin user
-        User::create([
-            'name' => 'Admin',
-            'email' => 'admin@example.com',
-            'password' => Hash::make('password'),
-        ]);
+        // Call SuperAdminSeeder to create super admin user
+        $this->call(SuperAdminSeeder::class);
 
-        // Create test user
-        User::factory()->create([
+        // Create test user with viewer role
+        User::create([
             'name' => 'Test User',
             'email' => 'test@example.com',
+            'password' => Hash::make('password123'),
+            'role' => 'viewer',
         ]);
 
         // Create sample invoices
         Penagihan::create([
-            'project_name' => 'E-Commerce Platform',
-            'client_name' => 'Tech Corp Inc',
-            'invoice_number' => 'INV-2024-001',
-            'invoice_date' => '2024-01-15',
-            'due_date' => '2024-02-15',
-            'amount' => 25000000,
+            'nama_proyek' => 'E-Commerce Platform',
+            'nama_mitra' => 'Tech Corp Inc',
+            'pid' => 'PID-001',
+            'nomor_po' => 'PO-2024-001',
+            'phase' => 'Phase 1',
+            'status_ct' => 'BELUM CT',
+            'status_ut' => 'BELUM UT',
+            'rekon_nilai' => 25000000,
+            'rekon_material' => 'BELUM REKON',
+            'pelurusan_material' => 'BELUM LURUS',
+            'status_procurement' => 'ANTRI PERIV',
             'status' => 'paid',
-            'notes' => 'Full payment received',
-            'payment_date' => '2024-02-10',
+            'tanggal_invoice' => '2024-01-15',
+            'tanggal_jatuh_tempo' => '2024-02-15',
+            'catatan' => 'Full payment received',
         ]);
 
         Penagihan::create([
-            'project_name' => 'Mobile App Development',
-            'client_name' => 'Digital Solutions Ltd',
-            'invoice_number' => 'INV-2024-002',
-            'invoice_date' => '2024-02-01',
-            'due_date' => '2024-03-01',
-            'amount' => 35000000,
+            'nama_proyek' => 'Mobile App Development',
+            'nama_mitra' => 'Digital Solutions Ltd',
+            'pid' => 'PID-002',
+            'nomor_po' => 'PO-2024-002',
+            'phase' => 'Phase 2',
+            'status_ct' => 'BELUM CT',
+            'status_ut' => 'BELUM UT',
+            'rekon_nilai' => 35000000,
+            'rekon_material' => 'BELUM REKON',
+            'pelurusan_material' => 'BELUM LURUS',
+            'status_procurement' => 'ANTRI PERIV',
             'status' => 'pending',
-            'notes' => 'Awaiting payment',
+            'tanggal_invoice' => '2024-02-01',
+            'tanggal_jatuh_tempo' => '2024-03-01',
+            'catatan' => 'Awaiting payment',
         ]);
 
         Penagihan::create([
-            'project_name' => 'System Integration',
-            'client_name' => 'Future Tech Co',
-            'invoice_number' => 'INV-2024-003',
-            'invoice_date' => '2024-01-20',
-            'due_date' => '2024-02-20',
-            'amount' => 50000000,
+            'nama_proyek' => 'System Integration',
+            'nama_mitra' => 'Future Tech Co',
+            'pid' => 'PID-003',
+            'nomor_po' => 'PO-2024-003',
+            'phase' => 'Phase 3',
+            'status_ct' => 'BELUM CT',
+            'status_ut' => 'BELUM UT',
+            'rekon_nilai' => 50000000,
+            'rekon_material' => 'BELUM REKON',
+            'pelurusan_material' => 'BELUM LURUS',
+            'status_procurement' => 'ANTRI PERIV',
             'status' => 'overdue',
-            'notes' => 'Payment overdue',
+            'tanggal_invoice' => '2024-01-20',
+            'tanggal_jatuh_tempo' => '2024-02-20',
+            'catatan' => 'Payment overdue',
         ]);
 
         Penagihan::create([
-            'project_name' => 'Cloud Migration',
-            'client_name' => 'Global Systems',
-            'invoice_number' => 'INV-2024-004',
-            'invoice_date' => '2024-03-01',
-            'due_date' => '2024-04-01',
-            'amount' => 45000000,
+            'nama_proyek' => 'Cloud Migration',
+            'nama_mitra' => 'Global Systems',
+            'pid' => 'PID-004',
+            'nomor_po' => 'PO-2024-004',
+            'phase' => 'Phase 4',
+            'status_ct' => 'BELUM CT',
+            'status_ut' => 'BELUM UT',
+            'rekon_nilai' => 45000000,
+            'rekon_material' => 'BELUM REKON',
+            'pelurusan_material' => 'BELUM LURUS',
+            'status_procurement' => 'ANTRI PERIV',
             'status' => 'pending',
-            'notes' => 'Cloud infrastructure project',
+            'tanggal_invoice' => '2024-03-01',
+            'tanggal_jatuh_tempo' => '2024-04-01',
+            'catatan' => 'Cloud infrastructure project',
         ]);
 
         Penagihan::create([
-            'project_name' => 'Website Redesign',
-            'client_name' => 'Creative Agency',
-            'invoice_number' => 'INV-2024-005',
-            'invoice_date' => '2024-02-15',
-            'due_date' => '2024-03-15',
-            'amount' => 20000000,
+            'nama_proyek' => 'Website Redesign',
+            'nama_mitra' => 'Creative Agency',
+            'pid' => 'PID-005',
+            'nomor_po' => 'PO-2024-005',
+            'phase' => 'Phase 5',
+            'status_ct' => 'BELUM CT',
+            'status_ut' => 'BELUM UT',
+            'rekon_nilai' => 20000000,
+            'rekon_material' => 'BELUM REKON',
+            'pelurusan_material' => 'BELUM LURUS',
+            'status_procurement' => 'ANTRI PERIV',
             'status' => 'cancelled',
-            'notes' => 'Project cancelled by client',
+            'tanggal_invoice' => '2024-02-15',
+            'tanggal_jatuh_tempo' => '2024-03-15',
+            'catatan' => 'Project cancelled by client',
         ]);
     }
 }

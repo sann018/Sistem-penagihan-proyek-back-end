@@ -2,15 +2,26 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
-class User extends Authenticatable
+class User extends Authenticatable implements MustVerifyEmail
 {
-    /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory, Notifiable, HasApiTokens;
+
+    /**
+     * Nama tabel database
+     */
+    protected $table = 'pengguna';
+
+    /**
+     * Nama kolom timestamp custom
+     */
+    const CREATED_AT = 'dibuat_pada';
+    const UPDATED_AT = 'diperbarui_pada';
 
     /**
      * The attributes that are mass assignable.
@@ -18,9 +29,11 @@ class User extends Authenticatable
      * @var list<string>
      */
     protected $fillable = [
-        'name',
+        'nama',
         'email',
-        'password',
+        'nik',
+        'kata_sandi',
+        'peran',
     ];
 
     /**
@@ -29,8 +42,8 @@ class User extends Authenticatable
      * @var list<string>
      */
     protected $hidden = [
-        'password',
-        'remember_token',
+        'kata_sandi',
+        'token_ingat',
     ];
 
     /**
@@ -41,8 +54,56 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
+            'email_terverifikasi_pada' => 'datetime',
+            'kata_sandi' => 'hashed',
         ];
+    }
+
+    /**
+     * Get password attribute accessor
+     */
+    public function getAuthPassword()
+    {
+        return $this->kata_sandi;
+    }
+
+    /**
+     * Get remember token column name
+     */
+    public function getRememberTokenName()
+    {
+        return 'token_ingat';
+    }
+
+    /**
+     * Get role attribute accessor (alias untuk peran)
+     */
+    public function getRoleAttribute()
+    {
+        return $this->peran;
+    }
+
+    /**
+     * Check if user is super admin
+     */
+    public function isSuperAdmin(): bool
+    {
+        return $this->peran === 'super_admin';
+    }
+
+    /**
+     * Check if user is viewer
+     */
+    public function isViewer(): bool
+    {
+        return $this->peran === 'viewer';
+    }
+
+    /**
+     * Check if user has permission to modify data
+     */
+    public function canModify(): bool
+    {
+        return $this->isSuperAdmin();
     }
 }

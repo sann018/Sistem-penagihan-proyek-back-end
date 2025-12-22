@@ -38,7 +38,7 @@ class PenagihanController extends Controller
         }
 
         // Sorting
-        $sortBy = $request->get('sort_by', 'created_at');
+        $sortBy = $request->get('sort_by', 'dibuat_pada');
         $sortOrder = $request->get('sort_order', 'desc');
         $query->orderBy($sortBy, $sortOrder);
 
@@ -61,14 +61,18 @@ class PenagihanController extends Controller
             'nama_proyek' => 'required|string|max:255',
             'nama_mitra' => 'required|string|max:255',
             'pid' => 'required|string|unique:penagihan,pid',
+            'jenis_po' => 'nullable|string|max:255',
             'nomor_po' => 'required|string|max:255',
             'phase' => 'required|string|max:255',
             'rekon_nilai' => 'required|numeric|min:0',
             'status_ct' => 'nullable|string|max:255',
             'status_ut' => 'nullable|string|max:255',
+            'rekap_boq' => 'nullable|string|max:255',
             'rekon_material' => 'nullable|string|max:255',
             'pelurusan_material' => 'nullable|string|max:255',
             'status_procurement' => 'nullable|string|max:255',
+            'estimasi_durasi_hari' => 'nullable|integer|min:1',
+            'tanggal_mulai' => 'nullable|date',
             'tanggal_invoice' => 'nullable|date',
             'tanggal_jatuh_tempo' => 'nullable|date|after_or_equal:tanggal_invoice',
             'catatan' => 'nullable|string',
@@ -129,14 +133,18 @@ class PenagihanController extends Controller
             'nama_proyek' => 'sometimes|required|string|max:255',
             'nama_mitra' => 'sometimes|required|string|max:255',
             'pid' => 'sometimes|required|string|unique:penagihan,pid,' . $id,
+            'jenis_po' => 'nullable|string|max:255',
             'nomor_po' => 'sometimes|required|string|max:255',
             'phase' => 'sometimes|required|string|max:255',
             'rekon_nilai' => 'sometimes|required|numeric|min:0',
             'status_ct' => 'nullable|string|max:255',
             'status_ut' => 'nullable|string|max:255',
+            'rekap_boq' => 'nullable|string|max:255',
             'rekon_material' => 'nullable|string|max:255',
             'pelurusan_material' => 'nullable|string|max:255',
             'status_procurement' => 'nullable|string|max:255',
+            'estimasi_durasi_hari' => 'nullable|integer|min:1',
+            'tanggal_mulai' => 'nullable|date',
             'tanggal_invoice' => 'nullable|date',
             'tanggal_jatuh_tempo' => 'nullable|date|after_or_equal:tanggal_invoice',
             'catatan' => 'nullable|string',
