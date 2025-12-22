@@ -8,6 +8,7 @@ use App\Http\Controllers\ForgotPasswordController;
 use App\Http\Controllers\ResetPasswordController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\UserManagementController;
+use App\Http\Controllers\AktivitasController;
 
 /*
 |--------------------------------------------------------------------------
@@ -35,6 +36,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Profile routes (semua user bisa akses)
     Route::get('/profile', [ProfileController::class, 'show']);
     Route::put('/profile', [ProfileController::class, 'update']);
+    Route::post('/profile/photo', [ProfileController::class, 'uploadPhoto']);
     Route::put('/change-password', [ProfileController::class, 'changePassword']);
 
     // Penagihan routes dengan role-based access
@@ -62,5 +64,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [UserManagementController::class, 'index']);
         Route::put('/{id}/reset-password', [UserManagementController::class, 'resetUserPassword']);
         Route::put('/{id}/role', [UserManagementController::class, 'updateRole']);
+    });
+
+    // Activity/Aktivitas routes (hanya super_admin)
+    Route::middleware('role:super_admin')->prefix('aktivitas')->group(function () {
+        Route::get('/', [AktivitasController::class, 'index']);
+        Route::get('/{id}', [AktivitasController::class, 'show']);
     });
 });

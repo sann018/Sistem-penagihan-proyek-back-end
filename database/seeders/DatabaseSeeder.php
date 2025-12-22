@@ -20,12 +20,15 @@ class DatabaseSeeder extends Seeder
         // Call SuperAdminSeeder to create super admin user
         $this->call(SuperAdminSeeder::class);
 
+        // Call ActivitySeeder to create sample activity logs
+        $this->call(ActivitySeeder::class);
+
         // Create test user with viewer role
         User::create([
-            'name' => 'Test User',
+            'nama' => 'Test User',
             'email' => 'test@example.com',
-            'password' => Hash::make('password123'),
-            'role' => 'viewer',
+            'kata_sandi' => Hash::make('password123'),
+            'peran' => 'viewer',
         ]);
 
         // Create sample invoices
