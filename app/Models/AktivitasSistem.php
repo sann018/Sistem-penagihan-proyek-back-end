@@ -74,6 +74,6 @@ class AktivitasSistem extends Model
      */
     public function scopeRecent($query)
     {
-        return $query->orderBy('waktu_aksi', 'desc');
+        return $query->with('pengguna')->orderBy('waktu_aksi', 'desc');
     }
 }

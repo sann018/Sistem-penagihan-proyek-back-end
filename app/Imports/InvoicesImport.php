@@ -14,6 +14,7 @@ use Maatwebsite\Excel\Validators\Failure;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Throwable;
+use Illuminate\Support\Facades\Log;
 
 class InvoicesImport implements 
     ToModel, 
@@ -26,6 +27,8 @@ class InvoicesImport implements
 {
     private array $errors = [];
     private array $failures = [];
+    private int $successCount = 0;
+    private int $rowCount = 0;
 
     /**
      * @param array $row
@@ -34,22 +37,41 @@ class InvoicesImport implements
      */
     public function model(array $row)
     {
-        return new Penagihan([
-            'nama_proyek'         => $row['nama_proyek'] ?? null,
-            'nama_mitra'          => $row['nama_mitra'] ?? null,
-            'pid'                 => $row['pid'] ?? null,
-            'nomor_po'            => $row['nomor_po'] ?? null,
-            'phase'               => $row['phase'] ?? null,
-            'status_ct'           => $row['status_ct'] ?? 'BELUM CT',
-            'status_ut'           => $row['status_ut'] ?? 'BELUM UT',
-            'rekon_nilai'         => $this->parseNumber($row['rekon_nilai'] ?? 0),
-            'rekon_material'      => $row['rekon_material'] ?? 'BELUM REKON',
-            'pelurusan_material'  => $row['pelurusan_material'] ?? 'BELUM LURUS',
-            'status_procurement'  => $row['status_procurement'] ?? 'ANTRI PERIV',
-            'tanggal_invoice'     => $this->parseDate($row['tanggal_invoice'] ?? null),
-            'tanggal_jatuh_tempo' => $this->parseDate($row['tanggal_jatuh_tempo'] ?? null),
-            'catatan'             => $row['catatan'] ?? null,
-        ]);
+        $this->rowCount++;
+        
+        // Skip jika nama_proyek kosong (header row atau baris kosong)
+        if (empty($row['nama_proyek'])) {
+            Log::warning("Row {$this->rowCount} skipped: nama_proyek kosong");
+            return null;
+        }
+
+        try {
+            $penagihan = new Penagihan([
+                'nama_proyek'         => trim($row['nama_proyek'] ?? ''),
+                'nama_mitra'          => trim($row['nama_mitra'] ?? ''),
+                'pid'                 => trim($row['pid'] ?? ''),
+                'jenis_po'            => trim($row['jenis_po'] ?? ''),
+                'nomor_po'            => trim($row['nomor_po'] ?? ''),
+                'phase'               => trim($row['phase'] ?? ''),
+                'status_ct'           => trim($row['status_ct'] ?? ''),
+                'status_ut'           => trim($row['status_ut'] ?? ''),
+                'rekap_boq'           => trim($row['rekap_boq'] ?? ''),
+                'rekon_nilai'         => $this->parseNumber($row['rekon_nilai'] ?? 0),
+                'rekon_material'      => trim($row['rekon_material'] ?? ''),
+                'pelurusan_material'  => trim($row['pelurusan_material'] ?? ''),
+                'status_procurement'  => trim($row['status_procurement'] ?? ''),
+                // Auto-set timer: 30 hari dari sekarang
+                'estimasi_durasi_hari' => 30,
+                'tanggal_mulai'        => now()->toDateString(),
+            ]);
+            
+            $this->successCount++;
+            Log::info("Row {$this->rowCount} berhasil diproses: {$penagihan->nama_proyek}");
+            return $penagihan;
+        } catch (\Exception $e) {
+            Log::error("Row {$this->rowCount} error: {$e->getMessage()}", ['row_data' => $row]);
+            return null;
+        }
     }
 
     /**
@@ -93,18 +115,17 @@ class InvoicesImport implements
         return [
             'nama_proyek' => 'required|string|max:255',
             'nama_mitra' => 'required|string|max:255',
-            'pid' => 'required|string|unique:penagihan,pid',
+            'pid' => 'required|string',
+            'jenis_po' => 'nullable|string|max:255',
             'nomor_po' => 'required|string|max:255',
             'phase' => 'required|string|max:255',
-            'rekon_nilai' => 'required|numeric|min:0',
             'status_ct' => 'nullable|string|max:255',
             'status_ut' => 'nullable|string|max:255',
+            'rekap_boq' => 'nullable|string|max:255',
+            'rekon_nilai' => 'nullable|numeric|min:0',
             'rekon_material' => 'nullable|string|max:255',
             'pelurusan_material' => 'nullable|string|max:255',
             'status_procurement' => 'nullable|string|max:255',
-            'tanggal_invoice' => 'nullable|date',
-            'tanggal_jatuh_tempo' => 'nullable|date',
-            'catatan' => 'nullable|string',
         ];
     }
 
@@ -160,5 +181,21 @@ class InvoicesImport implements
     public function chunkSize(): int
     {
         return 100;
+    }
+
+    /**
+     * Get success count
+     */
+    public function getSuccessCount(): int
+    {
+        return $this->successCount;
+    }
+
+    /**
+     * Get total rows processed
+     */
+    public function getRowCount(): int
+    {
+        return $this->rowCount;
     }
 }

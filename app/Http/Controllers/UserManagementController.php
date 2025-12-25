@@ -7,19 +7,30 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use App\Traits\LogsActivity;
 
 class UserManagementController extends Controller
 {
+    use LogsActivity;
     /**
-     * Get all users (Super Admin only).
+     * [👥 USER_MANAGEMENT] Tampilkan list semua user (Super Admin only)
+     * Include foto, role, dan info user detail
      */
     public function index(): JsonResponse
     {
         $users = User::all()->map(function($user) {
+            // Generate full URL for photo if exists
+            $photoUrl = null;
+            if ($user->foto) {
+                $photoUrl = url('storage/' . $user->foto);
+            }
+            
             return [
                 'id' => $user->id,
                 'name' => $user->nama,
                 'email' => $user->email,
+                'nik' => $user->nik,
+                'photo' => $photoUrl,
                 'role' => $user->peran,
                 'created_at' => $user->dibuat_pada,
             ];
@@ -32,7 +43,8 @@ class UserManagementController extends Controller
     }
 
     /**
-     * Admin reset password for any user.
+     * [👥 USER_MANAGEMENT] Reset password user oleh Super Admin
+     * Generate password baru dan log aktivitasnya
      */
     public function resetUserPassword(Request $request, $userId): JsonResponse
     {
@@ -61,6 +73,18 @@ class UserManagementController extends Controller
             'kata_sandi' => Hash::make($request->password)
         ]);
 
+        // Log activity
+        $this->logActivity(
+            $request,
+            'Reset Password User',
+            'edit',
+            "Mereset password untuk user: {$user->nama}",
+            'pengguna',
+            $user->id,
+            null,
+            null
+        );
+
         return response()->json([
             'success' => true,
             'message' => "Password untuk {$user->nama} berhasil direset"
@@ -68,7 +92,89 @@ class UserManagementController extends Controller
     }
 
     /**
-     * Update user role (Super Admin only).
+     * [👥 USER_MANAGEMENT] Update info user (Super Admin only)
+     * Bisa update nama, email, NIK dengan audit trail lengkap
+     */
+    public function update(Request $request, $userId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|required|string|max:255',
+            'email' => 'sometimes|required|email|unique:pengguna,email,' . $userId,
+            'nik' => 'nullable|string|max:20',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $user = User::find($userId);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User tidak ditemukan'
+            ], 404);
+        }
+
+        $updateData = [];
+        if ($request->has('name')) {
+            $updateData['nama'] = $request->name;
+        }
+        if ($request->has('email')) {
+            $updateData['email'] = $request->email;
+        }
+        if ($request->has('nik')) {
+            $updateData['nik'] = $request->nik;
+        }
+
+        // Store old data for audit
+        $dataSebelum = [
+            'nama' => $user->nama,
+            'email' => $user->email,
+            'nik' => $user->nik,
+        ];
+        
+        $user->update($updateData);
+        
+        // Store new data for audit
+        $dataSesudah = [
+            'nama' => $user->nama,
+            'email' => $user->email,
+            'nik' => $user->nik,
+        ];
+
+        // Log activity
+        $this->logActivity(
+            $request,
+            'Edit User',
+            'edit',
+            "Mengubah informasi user: {$user->nama}",
+            'pengguna',
+            $user->id,
+            $dataSebelum,
+            $dataSesudah
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Informasi user berhasil diupdate',
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->nama,
+                'email' => $user->email,
+                'nik' => $user->nik,
+                'role' => $user->peran,
+            ]
+        ]);
+    }
+
+    /**
+     * [👥 USER_MANAGEMENT] Update role user (Super Admin only)
+     * Ubah permission user antara super_admin, admin, atau viewer
      */
     public function updateRole(Request $request, $userId): JsonResponse
     {
@@ -93,7 +199,21 @@ class UserManagementController extends Controller
             ], 404);
         }
 
+        $roleSebelum = $user->peran;
+        
         $user->update(['peran' => $request->role]);
+
+        // Log activity
+        $this->logActivity(
+            $request,
+            'Ubah Role User',
+            'edit',
+            "Mengubah role user {$user->nama} dari {$roleSebelum} menjadi {$request->role}",
+            'pengguna',
+            $user->id,
+            ['peran' => $roleSebelum],
+            ['peran' => $request->role]
+        );
 
         return response()->json([
             'success' => true,

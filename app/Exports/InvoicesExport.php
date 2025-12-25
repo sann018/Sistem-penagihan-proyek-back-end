@@ -39,7 +39,7 @@ class InvoicesExport implements FromQuery, WithHeadings, WithMapping, WithStyles
             });
         }
 
-        return $query->orderBy('created_at', 'desc');
+        return $query->orderBy('dibuat_pada', 'desc');
     }
 
     /**
@@ -48,22 +48,19 @@ class InvoicesExport implements FromQuery, WithHeadings, WithMapping, WithStyles
     public function headings(): array
     {
         return [
-            'ID',
             'NAMA_PROYEK',
             'NAMA_MITRA',
             'PID',
+            'JENIS_PO',
             'NOMOR_PO',
             'PHASE',
+            'REKON_NILAI',
             'STATUS_CT',
             'STATUS_UT',
-            'REKON_NILAI',
+            'REKAP_BOQ',
             'REKON_MATERIAL',
             'PELURUSAN_MATERIAL',
             'STATUS_PROCUREMENT',
-            'TANGGAL_INVOICE',
-            'TANGGAL_JATUH_TEMPO',
-            'CATATAN',
-            'TANGGAL_DIBUAT',
         ];
     }
 
@@ -73,22 +70,19 @@ class InvoicesExport implements FromQuery, WithHeadings, WithMapping, WithStyles
     public function map($invoice): array
     {
         return [
-            $invoice->id,
             $invoice->nama_proyek,
             $invoice->nama_mitra,
             $invoice->pid,
+            $invoice->jenis_po ?? '',
             $invoice->nomor_po,
             $invoice->phase,
+            $invoice->rekon_nilai,
             $invoice->status_ct,
             $invoice->status_ut,
-            $invoice->rekon_nilai,
-            $invoice->rekon_material,
-            $invoice->pelurusan_material,
-            $invoice->status_procurement,
-            $invoice->tanggal_invoice ? $invoice->tanggal_invoice : '',
-            $invoice->tanggal_jatuh_tempo ? $invoice->tanggal_jatuh_tempo : '',
-            $invoice->catatan ?? '',
-            $invoice->created_at->format('Y-m-d H:i:s'),
+            $invoice->rekap_boq ?? '',
+            $invoice->rekon_material ?? '',
+            $invoice->pelurusan_material ?? '',
+            $invoice->status_procurement ?? '',
         ];
     }
 

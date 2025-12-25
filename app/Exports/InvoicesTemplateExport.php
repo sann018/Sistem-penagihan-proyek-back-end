@@ -18,42 +18,41 @@ class InvoicesTemplateExport implements FromCollection, WithHeadings, WithStyles
     {
         return collect([
             [
-                'Proyek A',
-                'Mitra Alpha',
-                'PID001',
-                'PO-1001',
-                'Planning',
-                'BELUM CT',
-                'BELUM UT',
-                '85000000',
-                'BELUM REKON',
-                'BELUM LURUS',
-                'ANTRI PERIV',
-                '2024-01-15',
-                '2024-02-15',
-                'Catatan proyek A',
+                'Pembangunan Site Melawi',      // nama_proyek
+                'Mitra Borneo Jaya',            // nama_mitra
+                'PID-2025-001',                 // pid
+                'Po Material',                  // jenis_po
+                '5500012345',                   // nomor_po
+                'Phase 1',                      // phase
+                'SUDAH CT',                     // status_ct
+                'SUDAH UT',                     // status_ut
+                'Sudah Rekap',                  // rekap_boq
+                '3000000',                      // rekon_nilai
+                'Sudah Rekon',                  // rekon_material
+                'Sudah Lurus',                  // pelurusan_material
+                'Proses Periv',                 // status_procurement
             ],
             [
-                'Proyek B',
-                'Mitra Beta',
-                'PID002',
-                'PO-1002',
-                'Execution',
-                'SUDAH CT',
-                'SUDAH UT',
-                '100000000',
-                'SUDAH REKON',
-                'SUDAH LURUS',
-                'OTW REG',
-                '2024-01-20',
-                '2024-03-20',
-                'Catatan proyek B',
+                'Perbaikan Fiber Kapuas',       // nama_proyek
+                'Cahaya Teleponindo',           // nama_mitra
+                'PID-2026-002',                 // pid
+                'Po Jasa',                      // jenis_po
+                '5500012346',                   // nomor_po
+                'Phase 2',                      // phase
+                'BELUM CT',                     // status_ct
+                'BELUM UT',                     // status_ut
+                'Belum Rekap',                  // rekap_boq
+                '2500000',                      // rekon_nilai
+                'Belum Rekon',                  // rekon_material
+                'Belum Lurus',                  // pelurusan_material
+                'Antri Periv',                  // status_procurement
             ],
         ]);
     }
 
     /**
-     * Return column headings (sesuai dengan mapping di InvoicesImport)
+     * Return column headings (urutan sesuai dengan tabel)
+     * PENTING: Header harus lowercase dan sesuai dengan field di InvoicesImport
      */
     public function headings(): array
     {
@@ -61,17 +60,16 @@ class InvoicesTemplateExport implements FromCollection, WithHeadings, WithStyles
             'nama_proyek',
             'nama_mitra',
             'pid',
+            'jenis_po',
             'nomor_po',
             'phase',
             'status_ct',
             'status_ut',
+            'rekap_boq',
             'rekon_nilai',
             'rekon_material',
             'pelurusan_material',
             'status_procurement',
-            'tanggal_invoice',
-            'tanggal_jatuh_tempo',
-            'catatan',
         ];
     }
 

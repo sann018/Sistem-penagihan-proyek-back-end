@@ -7,11 +7,14 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
+use App\Traits\LogsActivity;
 
 class ProfileController extends Controller
 {
+    use LogsActivity;
     /**
-     * Get user profile.
+     * [👤 PROFILE_MANAGEMENT] Tampilkan profil user yang sedang login
+     * Include foto URL, role, dan info personal
      */
     public function show(Request $request): JsonResponse
     {
@@ -39,7 +42,8 @@ class ProfileController extends Controller
     }
 
     /**
-     * Update user profile (name, email).
+     * [👤 PROFILE_MANAGEMENT] Update profil user (nama, email, NIK)
+     * Menyimpan perubahan data personal dengan audit trail
      */
     public function update(Request $request): JsonResponse
     {
@@ -71,7 +75,33 @@ class ProfileController extends Controller
             $updateData['nik'] = $request->nik;
         }
 
+        // Store old data
+        $dataSebelum = [
+            'nama' => $user->nama,
+            'email' => $user->email,
+            'nik' => $user->nik,
+        ];
+        
         $user->update($updateData);
+        
+        // Store new data
+        $dataSesudah = [
+            'nama' => $user->nama,
+            'email' => $user->email,
+            'nik' => $user->nik,
+        ];
+
+        // Log activity
+        $this->logActivity(
+            $request,
+            'Edit Profil',
+            'edit',
+            "Mengubah informasi profil",
+            'pengguna',
+            $user->id,
+            $dataSebelum,
+            $dataSesudah
+        );
 
         return response()->json([
             'success' => true,
@@ -88,7 +118,8 @@ class ProfileController extends Controller
     }
 
     /**
-     * Change user password (when logged in).
+     * [👤 PROFILE_MANAGEMENT] Ubah password user saat sedang login
+     * Validasi password lama sebelum set password baru
      */
     public function changePassword(Request $request): JsonResponse
     {
@@ -120,6 +151,18 @@ class ProfileController extends Controller
             'kata_sandi' => Hash::make($request->password)
         ]);
 
+        // Log activity
+        $this->logActivity(
+            $request,
+            'Ubah Password',
+            'edit',
+            "Mengubah password akun",
+            'pengguna',
+            $user->id,
+            null,
+            null
+        );
+
         return response()->json([
             'success' => true,
             'message' => 'Password berhasil diubah'
@@ -127,7 +170,8 @@ class ProfileController extends Controller
     }
 
     /**
-     * Upload profile photo.
+     * [👤 PROFILE_MANAGEMENT] Upload foto profil user
+     * Mendukung JPEG, PNG, GIF dengan maksimal 1MB
      */
     public function uploadPhoto(Request $request): JsonResponse
     {
@@ -161,6 +205,18 @@ class ProfileController extends Controller
 
             // Generate full URL for photo dengan url() agar include domain
             $photoUrl = url('storage/' . $path);
+
+            // Log activity
+            $this->logActivity(
+                $request,
+                'Upload Foto Profil',
+                'upload',
+                "Mengupload foto profil",
+                'pengguna',
+                $user->id,
+                null,
+                ['foto' => $path]
+            );
 
             return response()->json([
                 'success' => true,

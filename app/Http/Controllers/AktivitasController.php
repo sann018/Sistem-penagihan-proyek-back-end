@@ -9,29 +9,33 @@ use App\Models\AktivitasSistem;
 class AktivitasController extends Controller
 {
     /**
-     * Get all activities with pagination and filters
+     * [🔄 ACTIVITY_TRACKING] Tampilkan semua aktivitas dengan paginasi dan filter
+     * Super Admin lihat semua, Admin hanya aktivitas sendiri
      */
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
         
-        // Check permission - only super_admin can see all activities
-        if ($user->peran !== 'super_admin') {
+        $query = AktivitasSistem::recent();
+
+        // Super admin can see all activities
+        // Admin can only see their own activities
+        if ($user->peran === 'admin') {
+            $query->byUser($user->id);
+        } elseif ($user->peran !== 'super_admin') {
             return response()->json([
                 'success' => false,
-                'message' => 'Akses ditolak. Hanya Super Admin yang dapat melihat aktivitas sistem.'
+                'message' => 'Akses ditolak. Hanya Super Admin dan Admin yang dapat melihat aktivitas.'
             ], 403);
         }
-
-        $query = AktivitasSistem::recent();
 
         // Filter by type if provided
         if ($request->has('tipe')) {
             $query->byType($request->tipe);
         }
 
-        // Filter by user if provided
-        if ($request->has('pengguna_id')) {
+        // Filter by user if provided (only for super_admin)
+        if ($request->has('pengguna_id') && $user->peran === 'super_admin') {
             $query->byUser($request->pengguna_id);
         }
 
@@ -62,9 +66,28 @@ class AktivitasController extends Controller
         $perPage = $request->get('per_page', 20);
         $activities = $query->paginate($perPage);
 
+        // Format response dengan detail perubahan
+        $formattedActivities = $activities->items();
+        foreach ($formattedActivities as $activity) {
+            // Load pengguna relationship untuk foto profile
+            if ($activity->pengguna) {
+                $activity->foto_profile = $activity->pengguna->foto ?? null;
+                $activity->user_id = $activity->pengguna->id;
+            }
+            
+            // Format detail perubahan dari data_sebelum dan data_sesudah
+            if ($activity->data_sebelum && $activity->data_sesudah) {
+                $activity->perubahan_detail = $this->formatDetailPerubahan(
+                    $activity->data_sebelum,
+                    $activity->data_sesudah,
+                    $activity->tabel_yang_diubah
+                );
+            }
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $activities->items(),
+            'data' => $formattedActivities,
             'pagination' => [
                 'total' => $activities->total(),
                 'per_page' => $activities->perPage(),
@@ -91,11 +114,91 @@ class AktivitasController extends Controller
         }
 
         $activity = AktivitasSistem::findOrFail($id);
+        
+        // Load foto profile
+        if ($activity->pengguna) {
+            $activity->foto_profile = $activity->pengguna->foto ?? null;
+        }
+        
+        // Format detail perubahan
+        if ($activity->data_sebelum && $activity->data_sesudah) {
+            $activity->perubahan_detail = $this->formatDetailPerubahan(
+                $activity->data_sebelum,
+                $activity->data_sesudah,
+                $activity->tabel_yang_diubah
+            );
+        }
 
         return response()->json([
             'success' => true,
             'data' => $activity
         ]);
+    }
+
+    /**
+     * Format detail perubahan dari data sebelum dan sesudah
+     * Membandingkan setiap field dan menampilkan perubahan yang terjadi
+     */
+    private function formatDetailPerubahan($dataSebelum, $dataSesudah, $tabelYangDiubah): array
+    {
+        $perubahan = [];
+        
+        // Merge semua keys dari kedua array
+        $allKeys = array_merge(
+            array_keys((array)$dataSebelum),
+            array_keys((array)$dataSesudah)
+        );
+        $allKeys = array_unique($allKeys);
+
+        foreach ($allKeys as $key) {
+            $nilaiLama = $dataSebelum[$key] ?? null;
+            $nilaiBaru = $dataSesudah[$key] ?? null;
+
+            // Hanya tampilkan jika ada perubahan
+            if ($nilaiLama !== $nilaiBaru) {
+                $namaField = $this->formatFieldName($key);
+                $perubahan[$key] = [
+                    'nama_field' => $namaField,
+                    'nilai_lama' => $nilaiLama,
+                    'nilai_baru' => $nilaiBaru,
+                ];
+            }
+        }
+
+        return $perubahan;
+    }
+
+    /**
+     * Format nama field dari snake_case menjadi readable format
+     * Contoh: status_ct -> Status CT
+     */
+    private function formatFieldName($fieldName): string
+    {
+        // Replace underscore dengan spasi
+        $formatted = str_replace('_', ' ', $fieldName);
+        
+        // Capitalize each word
+        $formatted = ucwords(strtolower($formatted));
+        
+        // Special cases untuk field yang penting
+        $specialCases = [
+            'Status CT' => 'Status CT',
+            'Status UT' => 'Status UT',
+            'Rekon Nilai' => 'Rekon Nilai',
+            'Rekon Ppn' => 'Rekon PPN',
+            'Rekap BOQ' => 'Rekap BOQ',
+            'Fase' => 'Fase',
+            'PID' => 'PID',
+            'PO' => 'PO',
+        ];
+        
+        foreach ($specialCases as $original => $replacement) {
+            if (strtolower($formatted) === strtolower($original)) {
+                return $replacement;
+            }
+        }
+        
+        return $formatted;
     }
 
     /**

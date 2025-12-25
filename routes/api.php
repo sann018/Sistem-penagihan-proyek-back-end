@@ -40,34 +40,46 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/change-password', [ProfileController::class, 'changePassword']);
 
     // Penagihan routes dengan role-based access
+    // ✅ IMPORTANT: Specific routes MUST come before {id} wildcard!
     Route::prefix('penagihan')->group(function () {
-        // Read access (semua user yang login bisa lihat)
-        Route::get('/', [PenagihanController::class, 'index']);
+        // 1️⃣ Specific routes (non-parameterized)
         Route::get('/statistics', [PenagihanController::class, 'statistics']);
-        Route::get('/{id}', [PenagihanController::class, 'show']);
-
-        // Write access untuk CRUD (hanya super_admin dan viewer, TIDAK read_only)
-        Route::middleware('role:super_admin,viewer')->group(function () {
-            Route::post('/', [PenagihanController::class, 'store']);
-            Route::put('/{id}', [PenagihanController::class, 'update']);
-            Route::delete('/{id}', [PenagihanController::class, 'destroy']);
-            Route::post('/import', [PenagihanController::class, 'import']);
+        Route::get('/card-statistics', [PenagihanController::class, 'cardStatistics']);
+        
+        // 2️⃣ Export/Download routes (hanya super_admin dan admin)
+        // ✅ MUST be before {id} to prevent {id} matching 'export' and 'template'
+        Route::middleware('role:super_admin,admin')->group(function () {
+            Route::get('/export', [PenagihanController::class, 'export']);
+            Route::get('/template', [PenagihanController::class, 'downloadTemplate']);
         });
         
-        // Export/Template (semua bisa akses)
-        Route::get('/export', [PenagihanController::class, 'export']);
-        Route::get('/template', [PenagihanController::class, 'downloadTemplate']);
+        // 3️⃣ Import route (super_admin, admin, dan viewer bisa import)
+        // ✅ MUST be before {id} to prevent {id} matching 'import'
+        Route::middleware('role:super_admin,admin,viewer')->group(function () {
+            Route::post('/import', [PenagihanController::class, 'import']);
+        });
+
+        // 4️⃣ Generic routes with parameters (LAST)
+        // Read access (semua user yang login bisa lihat)
+        Route::get('/', [PenagihanController::class, 'index']);
+        Route::post('/', [PenagihanController::class, 'store']);
+        Route::middleware('role:super_admin,admin,viewer')->group(function () {
+            Route::put('/{id}', [PenagihanController::class, 'update']);
+            Route::delete('/{id}', [PenagihanController::class, 'destroy']);
+        });
+        Route::get('/{id}', [PenagihanController::class, 'show']);
     });
 
     // User Management routes (hanya super_admin)
     Route::middleware('role:super_admin')->prefix('users')->group(function () {
         Route::get('/', [UserManagementController::class, 'index']);
+        Route::put('/{id}', [UserManagementController::class, 'update']);
         Route::put('/{id}/reset-password', [UserManagementController::class, 'resetUserPassword']);
         Route::put('/{id}/role', [UserManagementController::class, 'updateRole']);
     });
 
-    // Activity/Aktivitas routes (hanya super_admin)
-    Route::middleware('role:super_admin')->prefix('aktivitas')->group(function () {
+    // Activity/Aktivitas routes (super_admin dan admin bisa akses)
+    Route::middleware('role:super_admin,admin')->prefix('aktivitas')->group(function () {
         Route::get('/', [AktivitasController::class, 'index']);
         Route::get('/{id}', [AktivitasController::class, 'show']);
     });

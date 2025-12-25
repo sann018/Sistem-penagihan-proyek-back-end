@@ -8,11 +8,16 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
+use App\Traits\LogsActivity;
 
 class AuthController extends Controller
 {
+    use LogsActivity;
     /**
-     * Register a new user.
+     * [🔐 AUTH_SYSTEM] Daftarkan user baru
+     * 
+     * @param Request $request - Email, password, nama
+     * @return JsonResponse - User data & token atau error
      */
     public function register(Request $request): JsonResponse
     {
@@ -34,10 +39,10 @@ class AuthController extends Controller
             'nama' => $request->name,
             'email' => $request->email,
             'kata_sandi' => Hash::make($request->password),
-            'peran' => 'read_only', // Default role untuk user baru (hanya bisa lihat)
+            'peran' => 'read_only', // [🔐 AUTH_SYSTEM] Role default user baru: hanya bisa baca
         ]);
 
-        // Send email verification
+        // [🔐 AUTH_SYSTEM] Kirim verifikasi email (opsional - belum aktif)
         // $user->sendEmailVerificationNotification();
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -59,7 +64,10 @@ class AuthController extends Controller
     }
 
     /**
-     * Login user and create token.
+     * [🔐 AUTH_SYSTEM] User login & generate token
+     * 
+     * @param Request $request - Email & password
+     * @return JsonResponse - User data & token atau error
      */
     public function login(Request $request): JsonResponse
     {
@@ -89,13 +97,13 @@ class AuthController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Login successful',
+            'message' => 'Login berhasil',
             'data' => [
                 'user' => [
                     'id' => $user->id,
-                    'name' => $user->nama,  // Map ke format frontend
+                    'name' => $user->nama,  // [🔐 AUTH_SYSTEM] Map kolom ke format frontend
                     'email' => $user->email,
-                    'role' => $user->peran, // Map ke format frontend
+                    'role' => $user->peran, // [🔐 AUTH_SYSTEM] Gunakan untuk permission checking
                     'created_at' => $user->dibuat_pada,
                 ],
                 'token' => $token,
@@ -104,7 +112,10 @@ class AuthController extends Controller
     }
 
     /**
-     * Logout user (revoke token).
+     * [🔐 AUTH_SYSTEM] User logout & batalkan token
+     * 
+     * @param Request $request
+     * @return JsonResponse - Success message
      */
     public function logout(Request $request): JsonResponse
     {
@@ -117,7 +128,10 @@ class AuthController extends Controller
     }
 
     /**
-     * Get authenticated user.
+     * [🔐 AUTH_SYSTEM] Dapatkan info user yang sedang login
+     * 
+     * @param Request $request
+     * @return JsonResponse - User data
      */
     public function me(Request $request): JsonResponse
     {
