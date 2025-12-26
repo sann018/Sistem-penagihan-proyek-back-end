@@ -464,7 +464,7 @@ class PenagihanController extends Controller
     public function setPrioritize(Request $request, string $id): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'prioritas' => 'nullable|integer|in:1', // hanya 1 atau null (hapus)
+            'prioritas' => 'nullable|integer|in:1,2', // 1=P1 (urgent), 2=P2 (important), null=hapus
         ]);
 
         if ($validator->fails()) {
@@ -493,7 +493,8 @@ class PenagihanController extends Controller
         ]);
 
         // Log activity
-        $action = $newPrioritas === 1 ? 'Set Prioritas Tinggi' : 'Hapus Prioritas';
+        $priorityLabel = $newPrioritas === 1 ? 'P1 (Urgent)' : ($newPrioritas === 2 ? 'P2 (Important)' : 'Hapus');
+        $action = $newPrioritas ? "Set Prioritas {$priorityLabel}" : 'Hapus Prioritas';
         $this->logActivity(
             $request,
             $action,
@@ -505,9 +506,12 @@ class PenagihanController extends Controller
             ['prioritas' => $newPrioritas]
         );
 
+        $successMessage = $newPrioritas === 1 ? 'Proyek berhasil di-set sebagai Prioritas 1 (Urgent)' : 
+                         ($newPrioritas === 2 ? 'Proyek berhasil di-set sebagai Prioritas 2 (Important)' : 'Prioritas berhasil dihapus');
+
         return response()->json([
             'success' => true,
-            'message' => $newPrioritas === 1 ? 'Proyek berhasil diprioritaskan' : 'Prioritas berhasil dihapus',
+            'message' => $successMessage,
             'data' => $this->addTimerInfo($penagihan->fresh())
         ]);
     }
@@ -520,54 +524,94 @@ class PenagihanController extends Controller
     public function autoPrioritize(): JsonResponse
     {
         try {
-            $threshold = 7; // hari
+            $threshold = 3; // hari (H-3 menuju deadline)
             $updated = 0;
             $cleared = 0;
+            $skipped = 0;
+            $debugInfo = [];
 
             // Get semua proyek yang punya timer
             $projects = Penagihan::whereNotNull('tanggal_mulai')
                 ->whereNotNull('estimasi_durasi_hari')
                 ->get();
 
+            Log::info("Auto-prioritize started. Total projects with timers: " . $projects->count());
+
             foreach ($projects as $project) {
-                // Skip yang sudah prioritas manual
+                $projectInfo = [
+                    'id' => $project->id,
+                    'nama' => $project->nama_proyek,
+                    'prioritas_awal' => $project->prioritas
+                ];
+
+                // Skip yang sudah prioritas manual (P1)
                 if ($project->prioritas === 1) {
+                    $projectInfo['action'] = 'skipped_p1_manual';
+                    $debugInfo[] = $projectInfo;
+                    $skipped++;
                     continue;
                 }
 
                 $daysRemaining = $project->getDaysUntilDeadline();
 
                 if ($daysRemaining === null) {
+                    $projectInfo['action'] = 'skipped_no_days';
+                    $debugInfo[] = $projectInfo;
+                    $skipped++;
                     continue;
                 }
 
-                // Set prioritas 2 jika mendekati deadline (0-7 hari) dan belum selesai
-                if ($daysRemaining >= 0 && $daysRemaining <= $threshold && !$project->isCompleted()) {
+                $projectInfo['days_remaining'] = $daysRemaining;
+                $projectInfo['is_completed'] = $project->isCompleted();
+
+                // Set prioritas 2 jika:
+                // 1. Mendekati deadline (0 sampai 3 hari) ATAU
+                // 2. OVERDUE (negatif hari) <- LEBIH URGENT!
+                // DAN belum selesai
+                if ($daysRemaining <= $threshold && !$project->isCompleted()) {
                     if ($project->prioritas !== 2) {
                         $project->update([
                             'prioritas' => 2,
                             'prioritas_updated_at' => now()
                         ]);
+                        $projectInfo['action'] = 'set_p2';
+                        $projectInfo['reason'] = $daysRemaining < 0 ? 'overdue' : 'approaching_deadline';
+                        $debugInfo[] = $projectInfo;
                         $updated++;
+                        Log::info("Set P2 for project {$project->id}: {$project->nama_proyek} (days: {$daysRemaining})");
+                    } else {
+                        $projectInfo['action'] = 'already_p2';
+                        $debugInfo[] = $projectInfo;
                     }
                 }
-                // Clear prioritas 2 jika sudah lewat threshold atau sudah selesai
+                // Clear prioritas 2 jika sudah lewat threshold (ke atas) atau sudah selesai
                 elseif ($project->prioritas === 2) {
                     $project->update([
                         'prioritas' => null,
                         'prioritas_updated_at' => now()
                     ]);
+                    $projectInfo['action'] = 'cleared_p2';
+                    $projectInfo['reason'] = $daysRemaining > $threshold ? 'over_threshold' : 'completed';
+                    $debugInfo[] = $projectInfo;
                     $cleared++;
+                    Log::info("Clear P2 for project {$project->id}: {$project->nama_proyek} (days: {$daysRemaining}, completed: " . ($project->isCompleted() ? 'yes' : 'no') . ")");
+                } else {
+                    $projectInfo['action'] = 'no_change';
+                    $debugInfo[] = $projectInfo;
                 }
             }
+
+            Log::info("Auto-prioritize completed. Updated: {$updated}, Cleared: {$cleared}, Skipped: {$skipped}");
 
             return response()->json([
                 'success' => true,
                 'message' => 'Auto-prioritize berhasil dijalankan',
                 'data' => [
-                    'projects_prioritized' => $updated,
-                    'priorities_cleared' => $cleared,
-                    'threshold_days' => $threshold
+                    'updated' => $updated,
+                    'cleared' => $cleared,
+                    'skipped' => $skipped,
+                    'threshold_days' => $threshold,
+                    'debug' => $debugInfo // Untuk debugging
                 ]
             ]);
         } catch (\Exception $e) {
