@@ -46,6 +46,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/statistics', [PenagihanController::class, 'statistics']);
         Route::get('/card-statistics', [PenagihanController::class, 'cardStatistics']);
         
+        // 🎯 Priority System Routes (hanya super_admin dan admin)
+        // ✅ MUST be before {id} to prevent {id} matching 'auto-prioritize'
+        Route::middleware('role:super_admin,admin')->group(function () {
+            Route::post('/auto-prioritize', [PenagihanController::class, 'autoPrioritize']);
+        });
+        
         // 2️⃣ Export/Download routes (hanya super_admin dan admin)
         // ✅ MUST be before {id} to prevent {id} matching 'export' and 'template'
         Route::middleware('role:super_admin,admin')->group(function () {
@@ -66,6 +72,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('role:super_admin,admin,viewer')->group(function () {
             Route::put('/{id}', [PenagihanController::class, 'update']);
             Route::delete('/{id}', [PenagihanController::class, 'destroy']);
+            // 🎯 Set/Unset prioritas manual (super_admin dan admin)
+            Route::put('/{id}/prioritize', [PenagihanController::class, 'setPrioritize']);
         });
         Route::get('/{id}', [PenagihanController::class, 'show']);
     });

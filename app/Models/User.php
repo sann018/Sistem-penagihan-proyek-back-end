@@ -29,12 +29,14 @@ class User extends Authenticatable implements MustVerifyEmail
      * @var list<string>
      */
     protected $fillable = [
+        'username',
         'nama',
         'email',
         'nik',
         'kata_sandi',
         'peran',
         'foto',
+        'terakhir_login_pada',
     ];
 
     /**
@@ -57,6 +59,7 @@ class User extends Authenticatable implements MustVerifyEmail
         return [
             'email_terverifikasi_pada' => 'datetime',
             'kata_sandi' => 'hashed',
+            'terakhir_login_pada' => 'datetime',
         ];
     }
 

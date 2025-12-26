@@ -18,11 +18,20 @@ class PenagihanController extends Controller
     use LogsActivity;
     /**
      * [📊 PROJECT_MANAGEMENT] Tampilkan list semua project penagihan
-     * Mendukung search, filter status, card filter, dan sorting
+     * Mendukung search, filter status, card filter, sorting, dan PRIORITAS
+     * 
+     * UPGRADE V2:
+     * - dashboard=true: Tampilkan hanya proyek prioritas (1 dan 2) untuk dashboard
+     * - Proyek prioritas 1 (manual) muncul duluan, kemudian prioritas 2 (auto)
      */
     public function index(Request $request): JsonResponse
     {
         $query = Penagihan::query();
+
+        // FITUR BARU: Filter untuk dashboard (hanya prioritas)
+        if ($request->get('dashboard') === 'true' || $request->get('dashboard') === true) {
+            $query->prioritized(); // scope dari Model
+        }
 
         // Search
         if ($request->has('search')) {
@@ -41,36 +50,36 @@ class PenagihanController extends Controller
             
             switch ($cardFilter) {
                 case 'sudah_penuh':
-                    // Semua 6 status dropdown = selesai/hijau
-                    $query->where('status_ct', 'Sudah CT')
-                          ->where('status_ut', 'Sudah UT')
-                          ->where('rekap_boq', 'Sudah Rekap')
-                          ->where('rekon_material', 'Sudah Rekon')
-                          ->where('pelurusan_material', 'Sudah Lurus')
-                          ->where('status_procurement', 'OTW REG');
+                    // Semua 6 status dropdown = selesai/hijau (case insensitive)
+                    $query->whereRaw('LOWER(status_ct) = ?', ['sudah ct'])
+                          ->whereRaw('LOWER(status_ut) = ?', ['sudah ut'])
+                          ->whereRaw('LOWER(rekap_boq) = ?', ['sudah rekap'])
+                          ->whereRaw('LOWER(rekon_material) = ?', ['sudah rekon'])
+                          ->whereRaw('LOWER(pelurusan_material) = ?', ['sudah lurus'])
+                          ->whereRaw('LOWER(status_procurement) = ?', ['otw reg']);
                     break;
                     
                 case 'tertunda':
                     // Status Procurement = Revisi Mitra
-                    $query->where('status_procurement', 'Revisi Mitra');
+                    $query->whereRaw('LOWER(status_procurement) = ?', ['revisi mitra']);
                     break;
                     
                 case 'belum_rekon':
                     // Rekap BOQ = Belum Rekap
-                    $query->where('rekap_boq', 'Belum Rekap');
+                    $query->whereRaw('LOWER(rekap_boq) = ?', ['belum rekap']);
                     break;
                     
                 case 'sedang_berjalan':
-                    // Ada salah satu status yang belum selesai (not sudah_penuh dan not tertunda)
+                    // Ada salah satu status yang belum selesai
                     $query->where(function($q) {
-                        $q->where('status_ct', '!=', 'Sudah CT')
-                          ->orWhere('status_ut', '!=', 'Sudah UT')
-                          ->orWhere('rekap_boq', '!=', 'Sudah Rekap')
-                          ->orWhere('rekon_material', '!=', 'Sudah Rekon')
-                          ->orWhere('pelurusan_material', '!=', 'Sudah Lurus')
-                          ->orWhere('status_procurement', '!=', 'OTW REG');
+                        $q->whereRaw('LOWER(status_ct) != ?', ['sudah ct'])
+                          ->orWhereRaw('LOWER(status_ut) != ?', ['sudah ut'])
+                          ->orWhereRaw('LOWER(rekap_boq) != ?', ['sudah rekap'])
+                          ->orWhereRaw('LOWER(rekon_material) != ?', ['sudah rekon'])
+                          ->orWhereRaw('LOWER(pelurusan_material) != ?', ['sudah lurus'])
+                          ->orWhereRaw('LOWER(status_procurement) != ?', ['otw reg']);
                     })
-                    ->where('status_procurement', '!=', 'Revisi Mitra');
+                    ->whereRaw('LOWER(status_procurement) != ?', ['revisi mitra']);
                     break;
             }
         }
@@ -80,24 +89,42 @@ class PenagihanController extends Controller
             $query->where('status', $request->status);
         }
 
-        // Sorting
-        $sortBy = $request->get('sort_by', 'dibuat_pada');
-        $sortOrder = $request->get('sort_order', 'desc');
-        $query->orderBy($sortBy, $sortOrder);
+        // Sorting (kecuali untuk dashboard yang sudah ada custom sorting di scope)
+        if (!$request->get('dashboard')) {
+            $sortBy = $request->get('sort_by', 'dibuat_pada');
+            $sortOrder = $request->get('sort_order', 'desc');
+            $query->orderBy($sortBy, $sortOrder);
+        }
 
         // Pagination
         $perPage = $request->get('per_page', 15);
         $penagihan = $query->paginate($perPage);
 
-        // Add timer info untuk setiap project
+        // Add timer info dan prioritas info untuk setiap project
         $penagihan->getCollection()->transform(function ($item) {
-            return $this->addTimerInfo($item);
+            $item = $this->addTimerInfo($item);
+            $item->prioritas_label = $this->getPrioritasLabel($item->prioritas);
+            return $item;
         });
 
         return response()->json([
             'success' => true,
             'data' => $penagihan
         ]);
+    }
+
+    /**
+     * Helper: Get prioritas label
+     */
+    private function getPrioritasLabel(?int $prioritas): ?string
+    {
+        if ($prioritas === 1) {
+            return 'Prioritas Tinggi';
+        }
+        if ($prioritas === 2) {
+            return 'Mendekati Deadline';
+        }
+        return null;
     }
 
     /**
@@ -360,41 +387,42 @@ class PenagihanController extends Controller
      */
     /**
      * [📊 PROJECT_STATISTICS] Get card statistics berdasarkan status dropdown
-     * - Sudah Penuh: Semua status dropdown berwarna hijau (selesai)
-     * - Sedang Berjalan: Ada status dropdown yang belum selesai (merah/kuning)
+     * 
+     * UPGRADE V2 - REQUIREMENT BARU:
+     * - Sudah Penuh: SEMUA 6 kondisi HARUS terpenuhi:
+     *   1. Status CT = "Sudah CT"
+     *   2. Status UT = "Sudah UT"
+     *   3. Rekap BOQ = "Sudah Rekap"
+     *   4. Rekon Material = "Sudah Rekon"
+     *   5. Pelurusan Material = "Sudah Lurus"
+     *   6. Status Procurement = "OTW Reg"
+     * - Sedang Berjalan: Ada status dropdown yang belum selesai
      * - Tertunda: Status Procurement = "Revisi Mitra"
      * - Belum Rekon: Rekap BOQ = "Belum Rekap"
      */
     public function cardStatistics(): JsonResponse
     {
-        // Define status yang dianggap "Selesai" (hijau)
-        $completedStatus = [
-            'status_ct' => 'Sudah CT',
-            'status_ut' => 'Sudah UT',
-            'rekap_boq' => 'Sudah Rekap',
-            'rekon_material' => 'Sudah Rekon',
-            'pelurusan_material' => 'Sudah Lurus',
-            'status_procurement' => 'OTW REG' // atau status final lainnya
-        ];
-
-        // Count Sudah Penuh (semua status selesai/hijau)
-        $sudahPenuh = Penagihan::where('status_ct', 'Sudah CT')
-            ->where('status_ut', 'Sudah UT')
-            ->where('rekap_boq', 'Sudah Rekap')
-            ->where('rekon_material', 'Sudah Rekon')
-            ->where('pelurusan_material', 'Sudah Lurus')
-            ->where('status_procurement', 'OTW REG')
+        // Count Sudah Penuh (SEMUA 6 status HARUS match - case insensitive)
+        $sudahPenuh = Penagihan::whereRaw('LOWER(status_ct) = ?', ['sudah ct'])
+            ->whereRaw('LOWER(status_ut) = ?', ['sudah ut'])
+            ->whereRaw('LOWER(rekap_boq) = ?', ['sudah rekap'])
+            ->whereRaw('LOWER(rekon_material) = ?', ['sudah rekon'])
+            ->whereRaw('LOWER(pelurusan_material) = ?', ['sudah lurus'])
+            ->whereRaw('LOWER(status_procurement) = ?', ['otw reg'])
             ->count();
 
-        // Count Tertunda (Status Procurement = Revisi Mitra)
-        $tertunda = Penagihan::where('status_procurement', 'Revisi Mitra')->count();
+        // Count Tertunda (Status Procurement = Revisi Mitra - case insensitive)
+        $tertunda = Penagihan::whereRaw('LOWER(status_procurement) = ?', ['revisi mitra'])->count();
 
-        // Count Belum Rekon (Rekap BOQ = Belum Rekap)
-        $belumRekon = Penagihan::where('rekap_boq', 'Belum Rekap')->count();
+        // Count Belum Rekon (Rekap BOQ = Belum Rekap - case insensitive)
+        $belumRekon = Penagihan::whereRaw('LOWER(rekap_boq) = ?', ['belum rekap'])->count();
 
-        // Count Sedang Berjalan (Ada salah satu status yang belum selesai, exclude yang Tertunda)
+        // Count Sedang Berjalan (Total - Sudah Penuh - Tertunda)
         $totalProyek = Penagihan::count();
         $sedangBerjalan = $totalProyek - $sudahPenuh - $tertunda;
+
+        // Ensure no negative values
+        $sedangBerjalan = max(0, $sedangBerjalan);
 
         return response()->json([
             'success' => true,
@@ -427,6 +455,129 @@ class PenagihanController extends Controller
                 'total_overdue' => $totalOverdue,
             ]
         ]);
+    }
+
+    /**
+     * [🎯 PRIORITY_SYSTEM] Set/Update prioritas manual untuk proyek
+     * prioritas: 1 = Prioritas Tinggi (manual), null = hapus prioritas
+     */
+    public function setPrioritize(Request $request, string $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'prioritas' => 'nullable|integer|in:1', // hanya 1 atau null (hapus)
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $penagihan = Penagihan::find($id);
+
+        if (!$penagihan) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Proyek tidak ditemukan'
+            ], 404);
+        }
+
+        $oldPrioritas = $penagihan->prioritas;
+        $newPrioritas = $request->prioritas;
+
+        $penagihan->update([
+            'prioritas' => $newPrioritas,
+            'prioritas_updated_at' => now()
+        ]);
+
+        // Log activity
+        $action = $newPrioritas === 1 ? 'Set Prioritas Tinggi' : 'Hapus Prioritas';
+        $this->logActivity(
+            $request,
+            $action,
+            'update',
+            "Mengubah prioritas proyek '{$penagihan->nama_proyek}' dari {$oldPrioritas} ke {$newPrioritas}",
+            'penagihan',
+            $penagihan->id,
+            ['prioritas' => $oldPrioritas],
+            ['prioritas' => $newPrioritas]
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $newPrioritas === 1 ? 'Proyek berhasil diprioritaskan' : 'Prioritas berhasil dihapus',
+            'data' => $this->addTimerInfo($penagihan->fresh())
+        ]);
+    }
+
+    /**
+     * [🎯 PRIORITY_SYSTEM] Auto-prioritize proyek yang mendekati deadline
+     * Otomatis set prioritas = 2 untuk proyek dengan sisa waktu <= 7 hari
+     * Yang sudah prioritas manual (1) tidak akan diubah
+     */
+    public function autoPrioritize(): JsonResponse
+    {
+        try {
+            $threshold = 7; // hari
+            $updated = 0;
+            $cleared = 0;
+
+            // Get semua proyek yang punya timer
+            $projects = Penagihan::whereNotNull('tanggal_mulai')
+                ->whereNotNull('estimasi_durasi_hari')
+                ->get();
+
+            foreach ($projects as $project) {
+                // Skip yang sudah prioritas manual
+                if ($project->prioritas === 1) {
+                    continue;
+                }
+
+                $daysRemaining = $project->getDaysUntilDeadline();
+
+                if ($daysRemaining === null) {
+                    continue;
+                }
+
+                // Set prioritas 2 jika mendekati deadline (0-7 hari) dan belum selesai
+                if ($daysRemaining >= 0 && $daysRemaining <= $threshold && !$project->isCompleted()) {
+                    if ($project->prioritas !== 2) {
+                        $project->update([
+                            'prioritas' => 2,
+                            'prioritas_updated_at' => now()
+                        ]);
+                        $updated++;
+                    }
+                }
+                // Clear prioritas 2 jika sudah lewat threshold atau sudah selesai
+                elseif ($project->prioritas === 2) {
+                    $project->update([
+                        'prioritas' => null,
+                        'prioritas_updated_at' => now()
+                    ]);
+                    $cleared++;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Auto-prioritize berhasil dijalankan',
+                'data' => [
+                    'projects_prioritized' => $updated,
+                    'priorities_cleared' => $cleared,
+                    'threshold_days' => $threshold
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Auto-prioritize error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menjalankan auto-prioritize',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

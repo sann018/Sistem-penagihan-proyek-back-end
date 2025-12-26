@@ -32,6 +32,8 @@ class Penagihan extends Model
         'rekon_material',
         'pelurusan_material',
         'status_procurement',
+        'prioritas',
+        'prioritas_updated_at',
         'estimasi_durasi_hari',
         'tanggal_mulai',
         'status',
@@ -77,5 +79,61 @@ class Penagihan extends Model
     public function scopeOverdue($query)
     {
         return $query->where('status', 'overdue');
+    }
+
+    /**
+     * Scope untuk proyek dengan prioritas
+     * prioritas = 1 (manual priority), 2 (auto priority mendekati deadline)
+     */
+    public function scopePrioritized($query)
+    {
+        return $query->whereNotNull('prioritas')
+                     ->orderByRaw('FIELD(prioritas, 1, 2)')
+                     ->orderBy('tanggal_mulai', 'asc');
+    }
+
+    /**
+     * Scope untuk proyek dengan prioritas manual (set oleh user)
+     */
+    public function scopeManualPriority($query)
+    {
+        return $query->where('prioritas', 1);
+    }
+
+    /**
+     * Scope untuk proyek dengan prioritas auto (mendekati deadline)
+     */
+    public function scopeAutoPriority($query)
+    {
+        return $query->where('prioritas', 2);
+    }
+
+    /**
+     * Check apakah proyek sudah selesai penuh (semua status hijau)
+     */
+    public function isCompleted(): bool
+    {
+        return $this->status_ct === 'Sudah CT'
+            && $this->status_ut === 'Sudah UT'
+            && $this->rekap_boq === 'Sudah Rekap'
+            && $this->rekon_material === 'Sudah Rekon'
+            && $this->pelurusan_material === 'Sudah Lurus'
+            && $this->status_procurement === 'OTW Reg';
+    }
+
+    /**
+     * Hitung sisa hari sampai deadline
+     */
+    public function getDaysUntilDeadline(): ?int
+    {
+        if (!$this->tanggal_mulai || !$this->estimasi_durasi_hari) {
+            return null;
+        }
+
+        $deadline = \Carbon\Carbon::parse($this->tanggal_mulai)
+                        ->addDays($this->estimasi_durasi_hari);
+        $now = now();
+
+        return $now->diffInDays($deadline, false);
     }
 }
