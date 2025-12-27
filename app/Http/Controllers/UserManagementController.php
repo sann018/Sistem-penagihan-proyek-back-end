@@ -28,6 +28,7 @@ class UserManagementController extends Controller
             return [
                 'id' => $user->id,
                 'name' => $user->nama,
+                'username' => $user->email, // Email digunakan sebagai username untuk login
                 'email' => $user->email,
                 'nik' => $user->nik,
                 'photo' => $photoUrl,
@@ -224,6 +225,62 @@ class UserManagementController extends Controller
                 'email' => $user->email,
                 'peran' => $user->peran,
             ]
+        ]);
+    }
+
+    /**
+     * [👥 USER_MANAGEMENT] Hapus user (Super Admin only)
+     * Delete user dari sistem dengan audit trail
+     */
+    public function destroy(Request $request, $userId): JsonResponse
+    {
+        $user = User::find($userId);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User tidak ditemukan'
+            ], 404);
+        }
+
+        // Cegah Super Admin menghapus dirinya sendiri
+        if ($request->user()->id === $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak dapat menghapus akun Anda sendiri'
+            ], 403);
+        }
+
+        $userName = $user->nama;
+        $userEmail = $user->email;
+
+        // Log activity sebelum delete
+        $this->logActivity(
+            $request,
+            'Hapus User',
+            'delete',
+            "Menghapus user: {$userName} ({$userEmail})",
+            'pengguna',
+            $user->id,
+            [
+                'nama' => $user->nama,
+                'email' => $user->email,
+                'nik' => $user->nik,
+                'peran' => $user->peran,
+            ],
+            null
+        );
+
+        // Delete foto jika ada
+        if ($user->foto && \Storage::exists('public/' . $user->foto)) {
+            \Storage::delete('public/' . $user->foto);
+        }
+
+        $user->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => "User {$userName} berhasil dihapus"
         ]);
     }
 }

@@ -71,7 +71,10 @@ class AktivitasController extends Controller
         foreach ($formattedActivities as $activity) {
             // Load pengguna relationship untuk foto profile
             if ($activity->pengguna) {
-                $activity->foto_profile = $activity->pengguna->foto ?? null;
+                // Generate full URL for photo if exists (consistent with ProfileController)
+                $activity->foto_profile = $activity->pengguna->foto 
+                    ? url('storage/' . $activity->pengguna->foto) 
+                    : null;
                 $activity->user_id = $activity->pengguna->id;
             }
             
@@ -115,9 +118,11 @@ class AktivitasController extends Controller
 
         $activity = AktivitasSistem::findOrFail($id);
         
-        // Load foto profile
+        // Load foto profile (generate full URL like ProfileController)
         if ($activity->pengguna) {
-            $activity->foto_profile = $activity->pengguna->foto ?? null;
+            $activity->foto_profile = $activity->pengguna->foto 
+                ? url('storage/' . $activity->pengguna->foto) 
+                : null;
         }
         
         // Format detail perubahan

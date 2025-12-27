@@ -39,23 +39,29 @@ class AuthController extends Controller
             'nama' => $request->name,
             'email' => $request->email,
             'kata_sandi' => Hash::make($request->password),
-            'peran' => 'read_only', // [🔐 AUTH_SYSTEM] Role default user baru: hanya bisa baca
+            'peran' => 'viewer', // Role default: viewer (read-only)
+            'email_terverifikasi_pada' => null, // Belum terverifikasi
         ]);
 
-        // [🔐 AUTH_SYSTEM] Kirim verifikasi email (opsional - belum aktif)
-        // $user->sendEmailVerificationNotification();
+        // [🔐 AUTH_SYSTEM] TODO: Kirim OTP ke email untuk verifikasi
+        // Generate OTP 6 digit
+        // Send email dengan OTP
+        // User harus verify dulu sebelum bisa login
 
+        // TEMPORARY: Auto-generate token (nanti harus verify email dulu)
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
             'success' => true,
-            'message' => 'User registered successfully',
+            'message' => 'Registrasi berhasil. Silakan verifikasi email Anda.',
             'data' => [
                 'user' => [
                     'id' => $user->id,
-                    'name' => $user->nama,  // Map ke format frontend
+                    'name' => $user->nama,
                     'email' => $user->email,
-                    'role' => $user->peran, // Map ke format frontend
+                    'role' => $user->peran,
+                    'photo' => $user->foto ? url('storage/' . $user->foto) : null,
+                    'email_verified' => false,
                     'created_at' => $user->dibuat_pada,
                 ],
                 'token' => $token,
@@ -72,7 +78,7 @@ class AuthController extends Controller
     public function login(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'email' => 'required|email',
+            'identifier' => 'required|string', // Support email or username
             'password' => 'required',
         ]);
 
@@ -84,7 +90,8 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $user = User::where('email', $request->email)->first();
+        // Find user by email only (username column doesn't exist)
+        $user = User::where('email', $request->identifier)->first();
 
         if (!$user || !Hash::check($request->password, $user->kata_sandi)) {
             return response()->json([
@@ -92,6 +99,9 @@ class AuthController extends Controller
                 'message' => 'Email atau password salah'
             ], 401);
         }
+
+        // Update last login timestamp
+        $user->update(['terakhir_login_pada' => now()]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
@@ -101,9 +111,10 @@ class AuthController extends Controller
             'data' => [
                 'user' => [
                     'id' => $user->id,
-                    'name' => $user->nama,  // [🔐 AUTH_SYSTEM] Map kolom ke format frontend
+                    'name' => $user->nama,
                     'email' => $user->email,
-                    'role' => $user->peran, // [🔐 AUTH_SYSTEM] Gunakan untuk permission checking
+                    'role' => $user->peran,
+                    'photo' => $user->foto ? url('storage/' . $user->foto) : null,
                     'created_at' => $user->dibuat_pada,
                 ],
                 'token' => $token,
@@ -144,6 +155,7 @@ class AuthController extends Controller
                 'name' => $user->nama,
                 'email' => $user->email,
                 'role' => $user->peran,
+                'photo' => $user->foto ? url('storage/' . $user->foto) : null,
                 'created_at' => $user->dibuat_pada,
             ]
         ]);

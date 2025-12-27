@@ -84,6 +84,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/{id}', [UserManagementController::class, 'update']);
         Route::put('/{id}/reset-password', [UserManagementController::class, 'resetUserPassword']);
         Route::put('/{id}/role', [UserManagementController::class, 'updateRole']);
+        Route::delete('/{id}', [UserManagementController::class, 'destroy']);
     });
 
     // Activity/Aktivitas routes (super_admin dan admin bisa akses)
