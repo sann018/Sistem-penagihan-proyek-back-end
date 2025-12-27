@@ -21,25 +21,52 @@ use App\Http\Controllers\AktivitasController;
 |
 */
 
-// Public routes (tanpa autentikasi)
+// ========================================
+// [\ud83d\udd10 AUTH_SYSTEM] PUBLIC ROUTES (No Authentication)
+// ========================================
 Route::post('/login', [AuthController::class, 'login']);
-Route::post('/register', [AuthController::class, 'register']);
 Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLinkEmail']);
 Route::post('/reset-password', [ResetPasswordController::class, 'reset']);
 
-// Protected routes (perlu login)
+// ========================================
+// [\ud83d\udd10 AUTH_SYSTEM] PROTECTED ROUTES (Authentication Required)
+// ========================================
 Route::middleware('auth:sanctum')->group(function () {
-    // Auth routes
+    // ========================================
+    // [\ud83d\udd10 AUTH] Basic Auth Routes (All Authenticated Users)
+    // ========================================
     Route::get('/user', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
-    // Profile routes (semua user bisa akses)
+    // ========================================
+    // [\ud83d\udd10 PROFILE] Profile Routes (All Authenticated Users)
+    // ========================================
     Route::get('/profile', [ProfileController::class, 'show']);
     Route::put('/profile', [ProfileController::class, 'update']);
     Route::post('/profile/photo', [ProfileController::class, 'uploadPhoto']);
     Route::put('/change-password', [ProfileController::class, 'changePassword']);
+    Route::put('/profile/change-password', [ProfileController::class, 'changePassword']); // Alias
 
-    // Penagihan routes dengan role-based access
+    // ========================================
+    // [\ud83d\udd10 USER_MANAGEMENT] User Management Routes (SUPER ADMIN ONLY)
+    // Register user baru HANYA bisa dilakukan oleh Super Admin
+    // ========================================
+    Route::middleware('role:super_admin')->group(function () {
+        // Register user baru (moved from public to protected)
+        Route::post('/register', [AuthController::class, 'register']);
+        
+        Route::prefix('users')->group(function () {
+            Route::get('/', [UserManagementController::class, 'index']);
+            Route::put('/{id}', [UserManagementController::class, 'update']);
+            Route::put('/{id}/reset-password', [UserManagementController::class, 'resetUserPassword']);
+            Route::put('/{id}/role', [UserManagementController::class, 'updateRole']);
+            Route::delete('/{id}', [UserManagementController::class, 'destroy']);
+        });
+    });
+
+    // ========================================
+    // [\ud83d\udd10 PENAGIHAN] Billing/Collection Routes (Role-Based Access)
+    // ========================================
     // ✅ IMPORTANT: Specific routes MUST come before {id} wildcard!
     Route::prefix('penagihan')->group(function () {
         // 1️⃣ Specific routes (non-parameterized)
@@ -78,16 +105,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{id}', [PenagihanController::class, 'show']);
     });
 
-    // User Management routes (hanya super_admin)
-    Route::middleware('role:super_admin')->prefix('users')->group(function () {
-        Route::get('/', [UserManagementController::class, 'index']);
-        Route::put('/{id}', [UserManagementController::class, 'update']);
-        Route::put('/{id}/reset-password', [UserManagementController::class, 'resetUserPassword']);
-        Route::put('/{id}/role', [UserManagementController::class, 'updateRole']);
-        Route::delete('/{id}', [UserManagementController::class, 'destroy']);
-    });
-
-    // Activity/Aktivitas routes (super_admin dan admin bisa akses)
+    // ========================================
+    // [\ud83d\udd10 ACTIVITY] Activity Log Routes (Super Admin & Admin)
+    // ========================================
     Route::middleware('role:super_admin,admin')->prefix('aktivitas')->group(function () {
         Route::get('/', [AktivitasController::class, 'index']);
         Route::get('/{id}', [AktivitasController::class, 'show']);

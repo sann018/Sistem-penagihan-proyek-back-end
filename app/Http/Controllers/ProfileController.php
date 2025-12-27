@@ -32,8 +32,12 @@ class ProfileController extends Controller
             'data' => [
                 'id' => $user->id,
                 'name' => $user->nama,
+                'username' => $user->username ?? $user->email,
                 'email' => $user->email,
                 'nik' => $user->nik,
+                'jobdesk' => $user->jobdesk,
+                'mitra' => $user->mitra,
+                'nomor_hp' => $user->nomor_hp,
                 'role' => $user->peran,
                 'photo' => $photoUrl,
                 'created_at' => $user->dibuat_pada,
@@ -51,8 +55,12 @@ class ProfileController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',
+            'username' => 'sometimes|nullable|string|max:50|unique:pengguna,username,' . $user->id,
             'email' => 'sometimes|required|email|unique:pengguna,email,' . $user->id,
             'nik' => 'sometimes|nullable|string|max:20',
+            'jobdesk' => 'sometimes|nullable|string|max:255',
+            'mitra' => 'sometimes|nullable|string|max:255',
+            'nomor_hp' => 'sometimes|nullable|string|max:20',
         ]);
 
         if ($validator->fails()) {
@@ -68,18 +76,34 @@ class ProfileController extends Controller
         if ($request->has('name')) {
             $updateData['nama'] = $request->name;
         }
+        if ($request->has('username')) {
+            $updateData['username'] = $request->username;
+        }
         if ($request->has('email')) {
             $updateData['email'] = $request->email;
         }
         if ($request->has('nik')) {
             $updateData['nik'] = $request->nik;
         }
+        if ($request->has('jobdesk')) {
+            $updateData['jobdesk'] = $request->jobdesk;
+        }
+        if ($request->has('mitra')) {
+            $updateData['mitra'] = $request->mitra;
+        }
+        if ($request->has('nomor_hp')) {
+            $updateData['nomor_hp'] = $request->nomor_hp;
+        }
 
         // Store old data
         $dataSebelum = [
             'nama' => $user->nama,
+            'username' => $user->username,
             'email' => $user->email,
             'nik' => $user->nik,
+            'jobdesk' => $user->jobdesk,
+            'mitra' => $user->mitra,
+            'nomor_hp' => $user->nomor_hp,
         ];
         
         $user->update($updateData);
@@ -87,8 +111,12 @@ class ProfileController extends Controller
         // Store new data
         $dataSesudah = [
             'nama' => $user->nama,
+            'username' => $user->username,
             'email' => $user->email,
             'nik' => $user->nik,
+            'jobdesk' => $user->jobdesk,
+            'mitra' => $user->mitra,
+            'nomor_hp' => $user->nomor_hp,
         ];
 
         // Log activity

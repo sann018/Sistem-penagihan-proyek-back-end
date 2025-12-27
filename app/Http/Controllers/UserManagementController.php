@@ -28,9 +28,12 @@ class UserManagementController extends Controller
             return [
                 'id' => $user->id,
                 'name' => $user->nama,
-                'username' => $user->email, // Email digunakan sebagai username untuk login
+                'username' => $user->username ?? $user->email,
                 'email' => $user->email,
                 'nik' => $user->nik,
+                'jobdesk' => $user->jobdesk,
+                'mitra' => $user->mitra,
+                'nomor_hp' => $user->nomor_hp,
                 'photo' => $photoUrl,
                 'role' => $user->peran,
                 'created_at' => $user->dibuat_pada,
