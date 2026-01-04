@@ -4,12 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\AktivitasSistem;
+use App\Models\LogAktivitas;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rules\Password;
 use App\Traits\LogsActivity;
 
 class AuthController extends Controller
@@ -18,16 +20,32 @@ class AuthController extends Controller
     /**
      * [🔐 AUTH_SYSTEM] Daftarkan user baru (SUPER ADMIN ONLY)
      * 
-     * @param Request $request - Email, password, nama, role, nik
+        * @param Request $request - Email, password, nama, role
      * @return JsonResponse - User data atau error
      */
     public function register(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
+            // Username:
+            // - 4-30 chars
+            // - huruf/angka/._-
+            // - tidak boleh diawali/diakhiri simbol
+            // - tidak boleh ada 2 simbol berurutan
+            'username' => [
+                'required',
+                'string',
+                'min:4',
+                'max:30',
+                'regex:/^(?=.{4,30}$)(?![._-])(?!.*[._-]{2})[a-zA-Z0-9._-]+(?<![._-])$/',
+                'unique:pengguna,username',
+            ],
             'email' => 'required|string|email|max:255|unique:pengguna',
-            'password' => 'required|string|min:8|confirmed',
-            'nik' => 'nullable|string|max:20',
+            'password' => [
+                'required',
+                'confirmed',
+                Password::min(8)->mixedCase()->numbers()->symbols(),
+            ],
             'role' => 'required|in:super_admin,admin,viewer',
         ]);
 
@@ -39,11 +57,13 @@ class AuthController extends Controller
             ], 422);
         }
 
+        $username = strtolower(trim((string) $request->username));
+
         $user = User::create([
             'nama' => $request->name,
             'email' => $request->email,
+            'username' => $username,
             'kata_sandi' => Hash::make($request->password),
-            'nik' => $request->nik,
             'peran' => $request->role,
             'email_terverifikasi_pada' => now(), // Internal app, auto-verify
         ]);
@@ -60,7 +80,6 @@ class AuthController extends Controller
             [
                 'nama' => $user->nama,
                 'email' => $user->email,
-                'nik' => $user->nik,
                 'peran' => $user->peran,
             ]
         );
@@ -72,8 +91,8 @@ class AuthController extends Controller
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->nama,
+                    'username' => $user->username,
                     'email' => $user->email,
-                    'nik' => $user->nik,
                     'role' => $user->peran,
                     'photo' => $user->foto ? url('storage/' . $user->foto) : null,
                     'created_at' => $user->dibuat_pada,
@@ -92,7 +111,7 @@ class AuthController extends Controller
     public function login(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'identifier' => 'required|string', // Email yang digunakan sebagai identifier
+            'identifier' => 'required|string', // Email / Username
             'password' => 'required|string',
         ]);
 
@@ -104,8 +123,20 @@ class AuthController extends Controller
             ], 422);
         }
 
-        // [🔐 AUTH_SYSTEM] Find user by email (username column doesn't exist)
-        $user = User::where('email', $request->identifier)->first();
+        $identifier = trim((string) $request->identifier);
+
+        // [🔐 AUTH_SYSTEM] Find user by email OR username
+        // Prioritaskan email match jika identifier berupa email
+        $user = null;
+        if (str_contains($identifier, '@')) {
+            $user = User::query()->where('email', $identifier)->first();
+        }
+        if (!$user) {
+            $user = User::query()
+                ->where('username', $identifier)
+                ->orWhere('email', $identifier)
+                ->first();
+        }
 
         if (!$user || !Hash::check($request->password, $user->kata_sandi)) {
             // [🔐 AUTH_SYSTEM] Log failed login attempt
@@ -117,7 +148,7 @@ class AuthController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Email atau password salah'
+                'message' => 'Email/Username atau password salah'
             ], 401);
         }
 
@@ -127,20 +158,21 @@ class AuthController extends Controller
         // [🔐 AUTH_SYSTEM] Generate Sanctum token
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        // [🔐 AUTH_SYSTEM] Log successful login (manual logging tanpa Request user)
-        AktivitasSistem::create([
-            'pengguna_id' => $user->id,
-            'nama_pengguna' => $user->nama,
-            'aksi' => 'Login',
-            'tipe' => 'login',
+        // [🔐 AUTH_SYSTEM] Log successful login (ke log_aktivitas - schema baru)
+        $uaInfo = $this->parseUserAgent($request->userAgent());
+        LogAktivitas::create([
+            'id_pengguna' => $user->id_pengguna,
+            'aksi' => 'login',
             'deskripsi' => "User {$user->nama} berhasil login",
-            'tabel_yang_diubah' => 'auth',
-            'id_record_yang_diubah' => $user->id,
-            'data_sebelum' => null,
-            'data_sesudah' => null,
-            'ip_address' => $request->ip(),
+            'path' => $request->path(),
+            'method' => $request->method(),
+            'status_code' => 200,
+            'alamat_ip' => $request->ip() ?? '0.0.0.0',
             'user_agent' => $request->userAgent(),
-            'waktu_aksi' => now(),
+            'device_type' => $uaInfo['device_type'],
+            'browser' => $uaInfo['browser'],
+            'os' => $uaInfo['os'],
+            'waktu_kejadian' => now(),
         ]);
 
         return response()->json([
@@ -148,12 +180,11 @@ class AuthController extends Controller
             'message' => 'Login berhasil',
             'data' => [
                 'user' => [
-                    'id' => $user->id,
+                    'id' => $user->id_pengguna,
                     'name' => $user->nama,
                     'username' => $user->username ?? $user->email,
                     'email' => $user->email,
                     'role' => $user->peran,
-                    'nik' => $user->nik,
                     'jobdesk' => $user->jobdesk,
                     'mitra' => $user->mitra,
                     'nomor_hp' => $user->nomor_hp,
@@ -209,11 +240,10 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'id' => $user->id,
+                'id' => $user->id_pengguna,
                 'name' => $user->nama,
                 'email' => $user->email,
                 'role' => $user->peran,
-                'nik' => $user->nik,
                 'photo' => $user->foto ? url('storage/' . $user->foto) : null,
                 'created_at' => $user->dibuat_pada,
             ]

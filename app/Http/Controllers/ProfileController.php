@@ -7,11 +7,50 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
+use App\Models\User;
 use App\Traits\LogsActivity;
+use Illuminate\Validation\Rules\Password;
 
 class ProfileController extends Controller
 {
     use LogsActivity;
+
+    /**
+     * [\ud83d\udcde PUBLIC] Kontak Super Admin untuk halaman login (tanpa auth).
+     * Mengambil nomor_hp dari user dengan peran super_admin.
+     */
+    public function superAdminContact(): JsonResponse
+    {
+        try {
+            $superAdmin = User::query()
+                ->where('peran', 'super_admin')
+                ->orderBy('dibuat_pada', 'asc')
+                ->first();
+
+            if (!$superAdmin) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'nomor_hp' => null,
+                        'name' => null,
+                    ],
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'nomor_hp' => $superAdmin->nomor_hp,
+                    'name' => $superAdmin->nama,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil kontak super admin: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
     /**
      * [👤 PROFILE_MANAGEMENT] Tampilkan profil user yang sedang login
      * Include foto URL, role, dan info personal
@@ -30,11 +69,10 @@ class ProfileController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'id' => $user->id,
+                'id' => $user->id_pengguna,
                 'name' => $user->nama,
                 'username' => $user->username ?? $user->email,
                 'email' => $user->email,
-                'nik' => $user->nik,
                 'jobdesk' => $user->jobdesk,
                 'mitra' => $user->mitra,
                 'nomor_hp' => $user->nomor_hp,
@@ -46,18 +84,49 @@ class ProfileController extends Controller
     }
 
     /**
-     * [👤 PROFILE_MANAGEMENT] Update profil user (nama, email, NIK)
+    * [👤 PROFILE_MANAGEMENT] Update profil user (nama, email)
      * Menyimpan perubahan data personal dengan audit trail
      */
     public function update(Request $request): JsonResponse
     {
         $user = $request->user();
+        $userKey = $user->id_pengguna;
+
+        $role = (string) ($user->peran ?? '');
+        $isAdmin = in_array($role, ['super_admin', 'admin'], true);
+
+        // Viewer hanya boleh edit field terbatas
+        $allowedFields = $isAdmin
+            ? ['name', 'username', 'email', 'jobdesk', 'mitra', 'nomor_hp']
+            : ['name', 'jobdesk', 'mitra', 'nomor_hp'];
+
+        $requestKeys = array_keys($request->all());
+        $forbiddenKeys = array_values(array_diff($requestKeys, $allowedFields));
+        if (!empty($forbiddenKeys)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akses ditolak',
+                'errors' => [
+                    'fields' => ['Field tidak diizinkan: ' . implode(', ', $forbiddenKeys)],
+                ],
+            ], 403);
+        }
 
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',
-            'username' => 'sometimes|nullable|string|max:50|unique:pengguna,username,' . $user->id,
-            'email' => 'sometimes|required|email|unique:pengguna,email,' . $user->id,
-            'nik' => 'sometimes|nullable|string|max:20',
+            // IMPORTANT: PK user menggunakan kolom id_pengguna, bukan id
+            'username' => $isAdmin ? [
+                'sometimes',
+                'nullable',
+                'string',
+                'min:4',
+                'max:30',
+                'regex:/^(?=.{4,30}$)(?![._-])(?!.*[._-]{2})[a-zA-Z0-9._-]+(?<![._-])$/',
+                'unique:pengguna,username,' . $userKey . ',id_pengguna',
+            ] : 'prohibited',
+            'email' => $isAdmin
+                ? ('sometimes|required|email|unique:pengguna,email,' . $userKey . ',id_pengguna')
+                : 'prohibited',
             'jobdesk' => 'sometimes|nullable|string|max:255',
             'mitra' => 'sometimes|nullable|string|max:255',
             'nomor_hp' => 'sometimes|nullable|string|max:20',
@@ -71,19 +140,26 @@ class ProfileController extends Controller
             ], 422);
         }
 
-        // Update dengan kolom bahasa Indonesia
+        $dataSebelum = [
+            'nama' => $user->nama,
+            'username' => $user->username,
+            'email' => $user->email,
+            'jobdesk' => $user->jobdesk,
+            'mitra' => $user->mitra,
+            'nomor_hp' => $user->nomor_hp,
+        ];
+
         $updateData = [];
         if ($request->has('name')) {
             $updateData['nama'] = $request->name;
         }
-        if ($request->has('username')) {
-            $updateData['username'] = $request->username;
+        if ($isAdmin && $request->has('username')) {
+            $updateData['username'] = $request->username === null
+                ? null
+                : strtolower(trim((string) $request->username));
         }
-        if ($request->has('email')) {
+        if ($isAdmin && $request->has('email')) {
             $updateData['email'] = $request->email;
-        }
-        if ($request->has('nik')) {
-            $updateData['nik'] = $request->nik;
         }
         if ($request->has('jobdesk')) {
             $updateData['jobdesk'] = $request->jobdesk;
@@ -95,36 +171,22 @@ class ProfileController extends Controller
             $updateData['nomor_hp'] = $request->nomor_hp;
         }
 
-        // Store old data
-        $dataSebelum = [
-            'nama' => $user->nama,
-            'username' => $user->username,
-            'email' => $user->email,
-            'nik' => $user->nik,
-            'jobdesk' => $user->jobdesk,
-            'mitra' => $user->mitra,
-            'nomor_hp' => $user->nomor_hp,
-        ];
-        
         $user->update($updateData);
-        
-        // Store new data
+
         $dataSesudah = [
             'nama' => $user->nama,
             'username' => $user->username,
             'email' => $user->email,
-            'nik' => $user->nik,
             'jobdesk' => $user->jobdesk,
             'mitra' => $user->mitra,
             'nomor_hp' => $user->nomor_hp,
         ];
 
-        // Log activity
         $this->logActivity(
             $request,
             'Edit Profil',
             'edit',
-            "Mengubah informasi profil",
+            'Mengubah informasi profil',
             'pengguna',
             $user->id,
             $dataSebelum,
@@ -135,10 +197,13 @@ class ProfileController extends Controller
             'success' => true,
             'message' => 'Profile berhasil diupdate',
             'data' => [
-                'id' => $user->id,
+                'id' => $user->id_pengguna,
                 'name' => $user->nama,
+                'username' => $user->username,
                 'email' => $user->email,
-                'nik' => $user->nik,
+                'jobdesk' => $user->jobdesk,
+                'mitra' => $user->mitra,
+                'nomor_hp' => $user->nomor_hp,
                 'role' => $user->peran,
                 'created_at' => $user->dibuat_pada,
             ]
@@ -154,8 +219,12 @@ class ProfileController extends Controller
         $user = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'current_password' => 'required',
-            'password' => 'required|string|min:8|confirmed',
+            'current_password' => 'required|string',
+            'password' => [
+                'required',
+                'confirmed',
+                Password::min(8)->mixedCase()->numbers()->symbols(),
+            ],
         ]);
 
         if ($validator->fails()) {
@@ -166,7 +235,6 @@ class ProfileController extends Controller
             ], 422);
         }
 
-        // Verify current password
         if (!Hash::check($request->current_password, $user->kata_sandi)) {
             return response()->json([
                 'success' => false,
@@ -174,17 +242,15 @@ class ProfileController extends Controller
             ], 400);
         }
 
-        // Update password
         $user->update([
             'kata_sandi' => Hash::make($request->password)
         ]);
 
-        // Log activity
         $this->logActivity(
             $request,
             'Ubah Password',
             'edit',
-            "Mengubah password akun",
+            'Mengubah password akun',
             'pengguna',
             $user->id,
             null,
@@ -199,14 +265,14 @@ class ProfileController extends Controller
 
     /**
      * [👤 PROFILE_MANAGEMENT] Upload foto profil user
-     * Mendukung JPEG, PNG, GIF dengan maksimal 1MB
+     * Mendukung JPEG, PNG, GIF dengan maksimal 2MB
      */
     public function uploadPhoto(Request $request): JsonResponse
     {
         $user = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:1024', // max 1MB
+            'photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048', // max 2MB
         ]);
 
         if ($validator->fails()) {

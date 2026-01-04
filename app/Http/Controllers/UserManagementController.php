@@ -6,7 +6,10 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rules\Password;
 use App\Traits\LogsActivity;
 
 class UserManagementController extends Controller
@@ -18,31 +21,40 @@ class UserManagementController extends Controller
      */
     public function index(): JsonResponse
     {
-        $users = User::all()->map(function($user) {
+        Log::info('[USER_MANAGEMENT] Fetching all users');
+        
+        $users = User::all();
+        Log::info('[USER_MANAGEMENT] Found users count: ' . $users->count());
+        
+        $mappedUsers = $users->map(function($user) {
             // Generate full URL for photo if exists
             $photoUrl = null;
             if ($user->foto) {
                 $photoUrl = url('storage/' . $user->foto);
             }
             
-            return [
-                'id' => $user->id,
+            $mapped = [
+                'id' => $user->id_pengguna, // Explicit primary key
                 'name' => $user->nama,
                 'username' => $user->username ?? $user->email,
                 'email' => $user->email,
-                'nik' => $user->nik,
-                'jobdesk' => $user->jobdesk,
-                'mitra' => $user->mitra,
-                'nomor_hp' => $user->nomor_hp,
+                'jobdesk' => $user->jobdesk ?? '',
+                'mitra' => $user->mitra ?? '',
+                'phone' => $user->nomor_hp ?? '', // Match frontend field name
                 'photo' => $photoUrl,
                 'role' => $user->peran,
-                'created_at' => $user->dibuat_pada,
+                'created_at' => $user->dibuat_pada ? $user->dibuat_pada->format('Y-m-d\TH:i:s.u\Z') : null,
             ];
+            
+            return $mapped;
         });
+
+        Log::info('[USER_MANAGEMENT] Sample mapped user: ' . json_encode($mappedUsers->first()));
 
         return response()->json([
             'success' => true,
-            'data' => $users
+            'message' => 'Data users berhasil dimuat',
+            'data' => $mappedUsers
         ]);
     }
 
@@ -53,7 +65,11 @@ class UserManagementController extends Controller
     public function resetUserPassword(Request $request, $userId): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'password' => 'required|string|min:8|confirmed',
+            'password' => [
+                'required',
+                'confirmed',
+                Password::min(8)->mixedCase()->numbers()->symbols(),
+            ],
         ]);
 
         if ($validator->fails()) {
@@ -97,14 +113,22 @@ class UserManagementController extends Controller
 
     /**
      * [👥 USER_MANAGEMENT] Update info user (Super Admin only)
-     * Bisa update nama, email, NIK dengan audit trail lengkap
+    * Bisa update nama, email dengan audit trail lengkap
      */
     public function update(Request $request, $userId): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',
-            'email' => 'sometimes|required|email|unique:pengguna,email,' . $userId,
-            'nik' => 'nullable|string|max:20',
+            'username' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'min:4',
+                'max:30',
+                'regex:/^(?=.{4,30}$)(?![._-])(?!.*[._-]{2})[a-zA-Z0-9._-]+(?<![._-])$/',
+                'unique:pengguna,username,' . $userId . ',id_pengguna',
+            ],
+            'email' => 'sometimes|required|email|unique:pengguna,email,' . $userId . ',id_pengguna',
         ]);
 
         if ($validator->fails()) {
@@ -128,18 +152,20 @@ class UserManagementController extends Controller
         if ($request->has('name')) {
             $updateData['nama'] = $request->name;
         }
+        if ($request->has('username')) {
+            $updateData['username'] = $request->username === null
+                ? null
+                : strtolower(trim((string) $request->username));
+        }
         if ($request->has('email')) {
             $updateData['email'] = $request->email;
-        }
-        if ($request->has('nik')) {
-            $updateData['nik'] = $request->nik;
         }
 
         // Store old data for audit
         $dataSebelum = [
             'nama' => $user->nama,
+            'username' => $user->username,
             'email' => $user->email,
-            'nik' => $user->nik,
         ];
         
         $user->update($updateData);
@@ -147,8 +173,8 @@ class UserManagementController extends Controller
         // Store new data for audit
         $dataSesudah = [
             'nama' => $user->nama,
+            'username' => $user->username,
             'email' => $user->email,
-            'nik' => $user->nik,
         ];
 
         // Log activity
@@ -167,10 +193,10 @@ class UserManagementController extends Controller
             'success' => true,
             'message' => 'Informasi user berhasil diupdate',
             'data' => [
-                'id' => $user->id,
+                'id' => $user->id_pengguna,
                 'name' => $user->nama,
+                'username' => $user->username ?? $user->email,
                 'email' => $user->email,
-                'nik' => $user->nik,
                 'role' => $user->peran,
             ]
         ]);
@@ -223,7 +249,7 @@ class UserManagementController extends Controller
             'success' => true,
             'message' => "Role {$user->nama} berhasil diubah menjadi {$request->role}",
             'data' => [
-                'id' => $user->id,
+                'id' => $user->id_pengguna,
                 'nama' => $user->nama,
                 'email' => $user->email,
                 'peran' => $user->peran,
@@ -234,6 +260,7 @@ class UserManagementController extends Controller
     /**
      * [👥 USER_MANAGEMENT] Hapus user (Super Admin only)
      * Delete user dari sistem dengan audit trail
+     * HARD DELETE - Data benar-benar dihapus dari database
      */
     public function destroy(Request $request, $userId): JsonResponse
     {
@@ -247,15 +274,25 @@ class UserManagementController extends Controller
         }
 
         // Cegah Super Admin menghapus dirinya sendiri
-        if ($request->user()->id === $user->id) {
+        $currentUserId = $request->user()->id_pengguna;
+        if ($currentUserId === $user->id_pengguna) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak dapat menghapus akun Anda sendiri'
             ], 403);
         }
 
+        // Cegah menghapus Super Admin lain
+        if ($user->peran === 'super_admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akun Super Admin tidak dapat dihapus'
+            ], 403);
+        }
+
         $userName = $user->nama;
         $userEmail = $user->email;
+        $userId = $user->id_pengguna;
 
         // Log activity sebelum delete
         $this->logActivity(
@@ -264,26 +301,45 @@ class UserManagementController extends Controller
             'delete',
             "Menghapus user: {$userName} ({$userEmail})",
             'pengguna',
-            $user->id,
+            $userId,
             [
+                'id' => $userId,
                 'nama' => $user->nama,
                 'email' => $user->email,
-                'nik' => $user->nik,
+                'username' => $user->username,
                 'peran' => $user->peran,
             ],
             null
         );
 
         // Delete foto jika ada
-        if ($user->foto && \Storage::exists('public/' . $user->foto)) {
-            \Storage::delete('public/' . $user->foto);
+        if ($user->foto && Storage::exists('public/' . $user->foto)) {
+            Storage::delete('public/' . $user->foto);
         }
 
-        $user->delete();
+        // HARD DELETE - Hapus permanen dari database
+        $deleted = $user->delete();
+
+        if (!$deleted) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menghapus user dari database'
+            ], 500);
+        }
+
+        // Verifikasi user benar-benar terhapus
+        $checkUser = User::find($userId);
+        if ($checkUser) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User masih ada di database setelah penghapusan'
+            ], 500);
+        }
 
         return response()->json([
             'success' => true,
-            'message' => "User {$userName} berhasil dihapus"
+            'message' => "User {$userName} berhasil dihapus dari sistem",
+            'deleted_id' => $userId
         ]);
     }
 }

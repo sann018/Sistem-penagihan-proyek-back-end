@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug User Management System</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        .header {
+            background: #2d3748;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 32px; margin-bottom: 10px; }
+        .header p { color: #cbd5e0; }
+        .content { padding: 30px; }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f7fafc;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .section h2 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 24px;
+        }
+        .status-card {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+        .status-card.success { border-left: 4px solid #48bb78; }
+        .status-card.error { border-left: 4px solid #f56565; }
+        .status-card.warning { border-left: 4px solid #ed8936; }
+        .status-card.info { border-left: 4px solid #4299e1; }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .badge.success { background: #c6f6d5; color: #22543d; }
+        .badge.error { background: #fed7d7; color: #742a2a; }
+        .badge.warning { background: #feebc8; color: #7c2d12; }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover { background: #5a67d8; transform: translateY(-2px); }
+        button:active { transform: translateY(0); }
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        pre {
+            background: #2d3748;
+            color: #68d391;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .log-entry {
+            padding: 8px 12px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        .log-info { background: #bee3f8; color: #2c5282; }
+        .log-success { background: #c6f6d5; color: #22543d; }
+        .log-error { background: #fed7d7; color: #742a2a; }
+        .log-warning { background: #feebc8; color: #7c2d12; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        th {
+            background: #edf2f7;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Debug User Management System</h1>
+            <p>Tool untuk debugging masalah data user tidak muncul</p>
+        </div>
+        
+        <div class="content">
+            <!-- Section 1: Token Input -->
+            <div class="section">
+                <h2>1️⃣ Masukkan Token</h2>
+                <p style="margin-bottom: 15px;">Login dulu, lalu paste token di sini:</p>
+                <input type="text" id="tokenInput" placeholder="Paste token Super Admin di sini...">
+                <button onclick="saveToken()">💾 Simpan Token</button>
+                <button onclick="getTokenFromLocalStorage()">📋 Ambil dari localStorage</button>
+                <div id="tokenStatus" style="margin-top: 15px;"></div>
+            </div>
+
+            <!-- Section 2: Test Connection -->
+            <div class="section">
+                <h2>2️⃣ Test Koneksi</h2>
+                <button onclick="testBackend()">🔌 Test Backend Server</button>
+                <button onclick="testAPI()">🔑 Test API /users</button>
+                <button onclick="runFullDiagnostic()">🚀 Run Full Diagnostic</button>
+                <div id="connectionStatus" style="margin-top: 15px;"></div>
+            </div>
+
+            <!-- Section 3: Results -->
+            <div class="section">
+                <h2>3️⃣ Results</h2>
+                <div id="results"></div>
+            </div>
+
+            <!-- Section 4: Logs -->
+            <div class="section">
+                <h2>4️⃣ Debug Logs</h2>
+                <button onclick="clearLogs()">🗑️ Clear Logs</button>
+                <div id="logs" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000/api';
+        let currentToken = '';
+
+        function log(message, type = 'info') {
+            const logsDiv = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString('id-ID');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            logsDiv.insertBefore(logEntry, logsDiv.firstChild);
+        }
+
+        function saveToken() {
+            const token = document.getElementById('tokenInput').value.trim();
+            if (!token) {
+                showStatus('tokenStatus', '❌ Token tidak boleh kosong', 'error');
+                return;
+            }
+            currentToken = token;
+            localStorage.setItem('debug_token', token);
+            showStatus('tokenStatus', '✅ Token berhasil disimpan', 'success');
+            log('Token disimpan', 'success');
+        }
+
+        function getTokenFromLocalStorage() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                document.getElementById('tokenInput').value = token;
+                currentToken = token;
+                showStatus('tokenStatus', '✅ Token ditemukan di localStorage', 'success');
+                log('Token diambil dari localStorage', 'success');
+            } else {
+                showStatus('tokenStatus', '❌ Token tidak ditemukan di localStorage', 'error');
+                log('Token tidak ditemukan di localStorage', 'error');
+            }
+        }
+
+        function showStatus(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status-card ${type}">${message}</div>`;
+        }
+
+        async function testBackend() {
+            log('Testing backend server...', 'info');
+            showStatus('connectionStatus', '<div class="spinner"></div> Testing backend...', 'info');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/user`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                
+                if (response.ok || response.status === 401) {
+                    showStatus('connectionStatus', '✅ Backend server berjalan dengan baik', 'success');
+                    log('Backend server OK', 'success');
+                } else {
+                    throw new Error('Backend tidak merespons dengan benar');
+                }
+            } catch (error) {
+                showStatus('connectionStatus', `❌ Backend server error: ${error.message}`, 'error');
+                log(`Backend error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testAPI() {
+            if (!currentToken) {
+                const savedToken = localStorage.getItem('debug_token') || localStorage.getItem('token');
+                if (savedToken) {
+                    currentToken = savedToken;
+                } else {
+                    showStatus('connectionStatus', '❌ Token belum diisi!', 'error');
+                    log('Token belum diisi', 'error');
+                    return;
+                }
+            }
+
+            log('Testing API /users...', 'info');
+            showStatus('connectionStatus', '<div class="spinner"></div> Testing API...', 'info');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/users`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${currentToken}`,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+                log(`API Response: HTTP ${response.status}`, response.ok ? 'success' : 'error');
+
+                if (response.ok) {
+                    displayResults(data);
+                    showStatus('connectionStatus', `✅ API berhasil! Ditemukan ${data.data?.length || 0} users`, 'success');
+                    log(`API OK - ${data.data?.length || 0} users ditemukan`, 'success');
+                } else {
+                    showStatus('connectionStatus', `❌ API Error: ${data.message || 'Unknown error'}`, 'error');
+                    log(`API Error: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                showStatus('connectionStatus', `❌ Request gagal: ${error.message}`, 'error');
+                log(`Request error: ${error.message}`, 'error');
+            }
+        }
+
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (!data || !data.data || !Array.isArray(data.data)) {
+                resultsDiv.innerHTML = '<div class="status-card error">❌ Format response tidak valid</div>';
+                return;
+            }
+
+            let html = `
+                <div class="status-card success">
+                    <strong>✅ Response Structure Valid</strong>
+                    <ul style="margin-left: 20px; margin-top: 10px;">
+                        <li>success: ${data.success}</li>
+                        <li>message: ${data.message || 'N/A'}</li>
+                        <li>data count: ${data.data.length} users</li>
+                    </ul>
+                </div>
+            `;
+
+            if (data.data.length > 0) {
+                html += '<h3 style="margin: 20px 0 10px 0;">📊 Users Data:</h3>';
+                html += '<table><thead><tr>';
+                html += '<th>ID</th><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Phone</th>';
+                html += '</tr></thead><tbody>';
+
+                data.data.forEach(user => {
+                    html += '<tr>';
+                    html += `<td>${user.id}</td>`;
+                    html += `<td>${user.name}</td>`;
+                    html += `<td>${user.username}</td>`;
+                    html += `<td>${user.email}</td>`;
+                    html += `<td><span class="badge success">${user.role}</span></td>`;
+                    html += `<td>${user.phone || '-'}</td>`;
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+
+                // Validation
+                const firstUser = data.data[0];
+                const requiredFields = ['id', 'name', 'username', 'email', 'role', 'created_at'];
+                const missingFields = requiredFields.filter(field => !firstUser.hasOwnProperty(field));
+                
+                if (missingFields.length === 0) {
+                    html += '<div class="status-card success">✅ Semua field required ada</div>';
+                } else {
+                    html += `<div class="status-card error">❌ Missing fields: ${missingFields.join(', ')}</div>`;
+                }
+
+                if (typeof firstUser.id === 'number') {
+                    html += '<div class="status-card success">✅ Field "id" adalah numeric</div>';
+                } else {
+                    html += `<div class="status-card error">❌ Field "id" bukan numeric: ${typeof firstUser.id}</div>`;
+                }
+            }
+
+            resultsDiv.innerHTML = html;
+        }
+
+        async function runFullDiagnostic() {
+            log('=== Starting Full Diagnostic ===', 'info');
+            document.getElementById('results').innerHTML = '';
+            
+            await testBackend();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await testAPI();
+            
+            log('=== Diagnostic Complete ===', 'success');
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+            log('Logs cleared', 'info');
+        }
+
+        // Auto-load token on page load
+        window.onload = () => {
+            const savedToken = localStorage.getItem('debug_token') || localStorage.getItem('token');
+            if (savedToken) {
+                document.getElementById('tokenInput').value = savedToken;
+                currentToken = savedToken;
+                log('Token auto-loaded from localStorage', 'info');
+            }
+            log('Debug tool ready', 'success');
+        };
+    </script>
+</body>
+</html>

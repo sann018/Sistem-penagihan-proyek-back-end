@@ -12,6 +12,11 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
      * @var string
      */
     protected $table = 'token_akses_pribadi';
+    
+    /**
+     * Primary key custom
+     */
+    protected $primaryKey = 'id_token';
 
     /**
      * Indicates if the model should be timestamped.

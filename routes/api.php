@@ -4,11 +4,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PenagihanController;
 use App\Http\Controllers\AuthController;
-use App\Http\Controllers\ForgotPasswordController;
-use App\Http\Controllers\ResetPasswordController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\AktivitasController;
+use App\Http\Controllers\NotifikasiController;
+use App\Http\Controllers\LogAktivitasController;
+use App\Http\Controllers\DataCleanupController;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,8 +26,7 @@ use App\Http\Controllers\AktivitasController;
 // [\ud83d\udd10 AUTH_SYSTEM] PUBLIC ROUTES (No Authentication)
 // ========================================
 Route::post('/login', [AuthController::class, 'login']);
-Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLinkEmail']);
-Route::post('/reset-password', [ResetPasswordController::class, 'reset']);
+Route::get('/super-admin-contact', [ProfileController::class, 'superAdminContact']);
 
 // ========================================
 // [\ud83d\udd10 AUTH_SYSTEM] PROTECTED ROUTES (Authentication Required)
@@ -39,13 +39,22 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
 
     // ========================================
-    // [\ud83d\udd10 PROFILE] Profile Routes (All Authenticated Users)
+    // [\ud83d\udd10 PROFILE]
+    // - viewer: can update limited fields + upload photo
+    // - admin & super_admin: can update profile / photo
+    // - super_admin: can change password
     // ========================================
     Route::get('/profile', [ProfileController::class, 'show']);
     Route::put('/profile', [ProfileController::class, 'update']);
+    // Alias untuk environment yang memblok method PUT
+    Route::post('/profile', [ProfileController::class, 'update']);
     Route::post('/profile/photo', [ProfileController::class, 'uploadPhoto']);
-    Route::put('/change-password', [ProfileController::class, 'changePassword']);
-    Route::put('/profile/change-password', [ProfileController::class, 'changePassword']); // Alias
+
+    // Ganti password hanya untuk Super Admin
+    Route::middleware('role:super_admin')->group(function () {
+        Route::put('/change-password', [ProfileController::class, 'changePassword']);
+        Route::put('/profile/change-password', [ProfileController::class, 'changePassword']); // Alias
+    });
 
     // ========================================
     // [\ud83d\udd10 USER_MANAGEMENT] User Management Routes (SUPER ADMIN ONLY)
@@ -65,51 +74,83 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ========================================
-    // [\ud83d\udd10 PENAGIHAN] Billing/Collection Routes (Role-Based Access)
-    // ========================================
+    // [\ud83d\udd10 PENAGIHAN] Billing/Collection Routes
     // ✅ IMPORTANT: Specific routes MUST come before {id} wildcard!
+    // ========================================
     Route::prefix('penagihan')->group(function () {
         // 1️⃣ Specific routes (non-parameterized)
         Route::get('/statistics', [PenagihanController::class, 'statistics']);
         Route::get('/card-statistics', [PenagihanController::class, 'cardStatistics']);
-        
-        // 🎯 Priority System Routes (hanya super_admin dan admin)
-        // ✅ MUST be before {id} to prevent {id} matching 'auto-prioritize'
-        Route::middleware('role:super_admin,admin')->group(function () {
+
+        // 🎯 Auto Prioritize (SUPER ADMIN ONLY)
+        Route::middleware('role:super_admin')->group(function () {
             Route::post('/auto-prioritize', [PenagihanController::class, 'autoPrioritize']);
         });
-        
-        // 2️⃣ Export/Download routes (hanya super_admin dan admin)
-        // ✅ MUST be before {id} to prevent {id} matching 'export' and 'template'
+
+        // 2️⃣ Export/Download routes (super_admin & admin)
         Route::middleware('role:super_admin,admin')->group(function () {
             Route::get('/export', [PenagihanController::class, 'export']);
             Route::get('/template', [PenagihanController::class, 'downloadTemplate']);
         });
-        
-        // 3️⃣ Import route (super_admin, admin, dan viewer bisa import)
-        // ✅ MUST be before {id} to prevent {id} matching 'import'
-        Route::middleware('role:super_admin,admin,viewer')->group(function () {
+
+        // 3️⃣ Import route (super_admin & admin)
+        Route::middleware('role:super_admin,admin')->group(function () {
             Route::post('/import', [PenagihanController::class, 'import']);
         });
 
-        // 4️⃣ Generic routes with parameters (LAST)
         // Read access (semua user yang login bisa lihat)
         Route::get('/', [PenagihanController::class, 'index']);
-        Route::post('/', [PenagihanController::class, 'store']);
-        Route::middleware('role:super_admin,admin,viewer')->group(function () {
+
+        // Write access (hanya super_admin & admin)
+        Route::middleware('role:super_admin,admin')->group(function () {
+            Route::post('/', [PenagihanController::class, 'store']);
             Route::put('/{id}', [PenagihanController::class, 'update']);
             Route::delete('/{id}', [PenagihanController::class, 'destroy']);
-            // 🎯 Set/Unset prioritas manual (super_admin dan admin)
             Route::put('/{id}/prioritize', [PenagihanController::class, 'setPrioritize']);
         });
+
         Route::get('/{id}', [PenagihanController::class, 'show']);
     });
 
     // ========================================
-    // [\ud83d\udd10 ACTIVITY] Activity Log Routes (Super Admin & Admin)
+    // [\ud83d\udd14 NOTIFIKASI] Notification Routes (super_admin & admin)
     // ========================================
-    Route::middleware('role:super_admin,admin')->prefix('aktivitas')->group(function () {
+    Route::middleware('role:super_admin,admin')->prefix('notifikasi')->group(function () {
+        Route::get('/', [NotifikasiController::class, 'index']);
+        Route::patch('/{id}/read', [NotifikasiController::class, 'markAsRead']);
+        Route::delete('/{id}', [NotifikasiController::class, 'destroy']);
+    });
+
+    // ========================================
+    // [\ud83d\udd0d LOG AKTIVITAS] Access & Navigation Logs (SUPER ADMIN ONLY)
+    // ========================================
+    Route::middleware('role:super_admin')->prefix('log-aktivitas')->group(function () {
+        Route::get('/', [LogAktivitasController::class, 'index']);
+    });
+
+    // ========================================
+    // [\ud83d\udd10 ACTIVITY] Activity Log Routes (SUPER ADMIN ONLY)
+    // ========================================
+    Route::middleware('role:super_admin')->prefix('aktivitas')->group(function () {
         Route::get('/', [AktivitasController::class, 'index']);
         Route::get('/{id}', [AktivitasController::class, 'show']);
+    });
+
+    // Alias endpoint for frontend compatibility
+    Route::middleware('role:super_admin')->prefix('aktivitas-sistem')->group(function () {
+        Route::get('/', [AktivitasController::class, 'index']);
+        Route::get('/{id}', [AktivitasController::class, 'show']);
+    });
+
+    // ========================================
+    // [🗑️ DATA CLEANUP] Data Cleanup Routes (SUPER ADMIN ONLY)
+    // ========================================
+    Route::middleware('role:super_admin')->prefix('cleanup')->group(function () {
+        Route::get('/available-years', [DataCleanupController::class, 'getAvailableYears']);
+        Route::post('/stats', [DataCleanupController::class, 'getCleanupStats']);
+        Route::delete('/aktivitas-sistem', [DataCleanupController::class, 'cleanupAktivitasSistem']);
+        Route::delete('/log-aktivitas', [DataCleanupController::class, 'cleanupLogAktivitas']);
+        Route::delete('/notifikasi', [DataCleanupController::class, 'cleanupNotifikasi']);
+        Route::delete('/all', [DataCleanupController::class, 'cleanupAll']);
     });
 });

@@ -15,7 +15,8 @@ class ForgotPasswordController extends Controller
     public function sendResetLinkEmail(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'email' => 'required|email|exists:users,email',
+            // User table di sistem ini adalah `pengguna`
+            'email' => 'required|email|exists:pengguna,email',
         ]);
 
         if ($validator->fails()) {

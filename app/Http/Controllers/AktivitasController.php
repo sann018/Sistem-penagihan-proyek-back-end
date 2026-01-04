@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use App\Models\AktivitasSistem;
+use Illuminate\Support\Facades\DB;
 
 class AktivitasController extends Controller
 {
@@ -16,12 +17,33 @@ class AktivitasController extends Controller
     {
         $user = $request->user();
         
-        $query = AktivitasSistem::recent();
+        // ✅ OPTIMASI: Gunakan JOIN untuk avoid N+1 problem
+        // NOTE: aktivitas_sistem sudah di-split (2026_01_01_000006) dan memakai schema baru.
+        $query = DB::table('aktivitas_sistem as a')
+            ->leftJoin('pengguna as p', 'a.id_pengguna', '=', 'p.id_pengguna')
+            ->select([
+                'a.id_aktivitas',
+                'a.id_pengguna',
+                DB::raw('p.nama as nama_pengguna'),
+                'a.aksi',
+                'a.tabel_target',
+                'a.id_target',
+                'a.detail_perubahan',
+                'a.keterangan',
+                'a.alamat_ip',
+                'a.user_agent',
+                'a.waktu_kejadian',
+                'p.foto as foto_profile',
+                'p.email as email_pengguna',
+                'p.peran as peran_pengguna'
+            ])
+            ->orderBy('a.waktu_kejadian', 'desc')
+            ->orderBy('a.id_aktivitas', 'desc');
 
         // Super admin can see all activities
         // Admin can only see their own activities
         if ($user->peran === 'admin') {
-            $query->byUser($user->id);
+            $query->where('a.id_pengguna', $user->id_pengguna);
         } elseif ($user->peran !== 'super_admin') {
             return response()->json([
                 'success' => false,
@@ -29,64 +51,116 @@ class AktivitasController extends Controller
             ], 403);
         }
 
-        // Filter by type if provided
-        if ($request->has('tipe')) {
-            $query->byType($request->tipe);
+        // Filter by type (compatibility for frontend: login/create/edit/delete)
+        if ($request->filled('tipe')) {
+            $tipe = $request->string('tipe')->toString();
+
+            $map = [
+                'create' => ['tambah_proyek', 'tambah_pengguna'],
+                'edit' => [
+                    'ubah_proyek',
+                    'ubah_pengguna',
+                    'ubah_status_proyek',
+                    'ubah_prioritas_proyek',
+                    'ubah_status_ct',
+                    'ubah_status_ut',
+                    'ubah_rekap_boq',
+                    'ubah_status_procurement',
+                    'ubah_role_pengguna',
+                    'reset_password_pengguna',
+                    'bulk_update',
+                ],
+                'delete' => ['hapus_proyek', 'hapus_pengguna', 'bulk_delete', 'force_delete'],
+                // 'login' berada di tabel log_aktivitas (bukan aktivitas_sistem)
+                'login' => [],
+            ];
+
+            if (array_key_exists($tipe, $map)) {
+                if (empty($map[$tipe])) {
+                    $query->whereRaw('1 = 0');
+                } else {
+                    $query->whereIn('a.aksi', $map[$tipe]);
+                }
+            }
         }
 
         // Filter by user if provided (only for super_admin)
-        if ($request->has('pengguna_id') && $user->peran === 'super_admin') {
-            $query->byUser($request->pengguna_id);
+        if ($request->filled('pengguna_id') && $user->peran === 'super_admin') {
+            $query->where('a.id_pengguna', (int) $request->get('pengguna_id'));
         }
 
         // Filter by table if provided
-        if ($request->has('tabel')) {
-            $query->byTable($request->tabel);
+        if ($request->filled('tabel')) {
+            $query->where('a.tabel_target', $request->string('tabel')->toString());
         }
 
-        // Search by user name or description
-        if ($request->has('search')) {
-            $search = $request->search;
+        // Search by user name, keterangan, aksi
+        if ($request->filled('search')) {
+            $search = $request->string('search')->toString();
             $query->where(function ($q) use ($search) {
-                $q->where('nama_pengguna', 'like', "%{$search}%")
-                  ->orWhere('deskripsi', 'like', "%{$search}%")
-                  ->orWhere('aksi', 'like', "%{$search}%");
+                $q->where('p.nama', 'like', "%{$search}%")
+                    ->orWhere('a.keterangan', 'like', "%{$search}%")
+                    ->orWhere('a.aksi', 'like', "%{$search}%")
+                    ->orWhere('a.tabel_target', 'like', "%{$search}%")
+                    ->orWhere('a.id_target', 'like', "%{$search}%");
             });
         }
 
         // Date range filter
-        if ($request->has('tanggal_mulai')) {
-            $query->where('waktu_aksi', '>=', $request->tanggal_mulai);
+        if ($request->filled('tanggal_mulai')) {
+            $query->where('a.waktu_kejadian', '>=', $request->get('tanggal_mulai'));
         }
 
-        if ($request->has('tanggal_akhir')) {
-            $query->where('waktu_aksi', '<=', $request->tanggal_akhir . ' 23:59:59');
+        if ($request->filled('tanggal_akhir')) {
+            $query->where('a.waktu_kejadian', '<=', $request->get('tanggal_akhir') . ' 23:59:59');
         }
 
         $perPage = $request->get('per_page', 20);
         $activities = $query->paginate($perPage);
 
         // Format response dengan detail perubahan
-        $formattedActivities = $activities->items();
-        foreach ($formattedActivities as $activity) {
-            // Load pengguna relationship untuk foto profile
-            if ($activity->pengguna) {
-                // Generate full URL for photo if exists (consistent with ProfileController)
-                $activity->foto_profile = $activity->pengguna->foto 
-                    ? url('storage/' . $activity->pengguna->foto) 
-                    : null;
-                $activity->user_id = $activity->pengguna->id;
+        $formattedActivities = collect($activities->items())->map(function ($activity) {
+            // Generate full URL for photo if exists
+            if ($activity->foto_profile) {
+                $activity->foto_profile = url('storage/' . $activity->foto_profile);
             }
             
-            // Format detail perubahan dari data_sebelum dan data_sesudah
-            if ($activity->data_sebelum && $activity->data_sesudah) {
-                $activity->perubahan_detail = $this->formatDetailPerubahan(
-                    $activity->data_sebelum,
-                    $activity->data_sesudah,
-                    $activity->tabel_yang_diubah
-                );
+            // Normalisasi detail_perubahan untuk frontend
+            $detail = null;
+            if (!empty($activity->detail_perubahan)) {
+                $decoded = is_string($activity->detail_perubahan)
+                    ? json_decode($activity->detail_perubahan, true)
+                    : $activity->detail_perubahan;
+
+                if (is_array($decoded)) {
+                    $perubahan = [];
+                    // Bisa berupa array of changes atau object; normalisasi ke array changes.
+                    foreach ($decoded as $item) {
+                        if (!is_array($item)) {
+                            continue;
+                        }
+
+                        $field = $item['field'] ?? null;
+                        if (!$field) {
+                            continue;
+                        }
+
+                        $perubahan[] = [
+                            'field' => $field,
+                            'label' => $this->formatFieldName($field),
+                            'nilai_lama' => $item['nilai_lama'] ?? null,
+                            'nilai_baru' => $item['nilai_baru'] ?? null,
+                        ];
+                    }
+
+                    $detail = ['perubahan' => $perubahan];
+                }
             }
-        }
+
+            $activity->detail_perubahan = $detail;
+            
+            return $activity;
+        });
 
         return response()->json([
             'success' => true,
@@ -120,57 +194,37 @@ class AktivitasController extends Controller
         
         // Load foto profile (generate full URL like ProfileController)
         if ($activity->pengguna) {
-            $activity->foto_profile = $activity->pengguna->foto 
-                ? url('storage/' . $activity->pengguna->foto) 
+            $activity->foto_profile = $activity->pengguna->foto
+                ? url('storage/' . $activity->pengguna->foto)
                 : null;
         }
-        
-        // Format detail perubahan
-        if ($activity->data_sebelum && $activity->data_sesudah) {
-            $activity->perubahan_detail = $this->formatDetailPerubahan(
-                $activity->data_sebelum,
-                $activity->data_sesudah,
-                $activity->tabel_yang_diubah
-            );
+
+        // Normalisasi detail_perubahan
+        $perubahan = [];
+        if (is_array($activity->detail_perubahan)) {
+            foreach ($activity->detail_perubahan as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $field = $item['field'] ?? null;
+                if (!$field) {
+                    continue;
+                }
+                $perubahan[] = [
+                    'field' => $field,
+                    'label' => $this->formatFieldName($field),
+                    'nilai_lama' => $item['nilai_lama'] ?? null,
+                    'nilai_baru' => $item['nilai_baru'] ?? null,
+                ];
+            }
         }
+
+        $activity->detail_perubahan = ['perubahan' => $perubahan];
 
         return response()->json([
             'success' => true,
             'data' => $activity
         ]);
-    }
-
-    /**
-     * Format detail perubahan dari data sebelum dan sesudah
-     * Membandingkan setiap field dan menampilkan perubahan yang terjadi
-     */
-    private function formatDetailPerubahan($dataSebelum, $dataSesudah, $tabelYangDiubah): array
-    {
-        $perubahan = [];
-        
-        // Merge semua keys dari kedua array
-        $allKeys = array_merge(
-            array_keys((array)$dataSebelum),
-            array_keys((array)$dataSesudah)
-        );
-        $allKeys = array_unique($allKeys);
-
-        foreach ($allKeys as $key) {
-            $nilaiLama = $dataSebelum[$key] ?? null;
-            $nilaiBaru = $dataSesudah[$key] ?? null;
-
-            // Hanya tampilkan jika ada perubahan
-            if ($nilaiLama !== $nilaiBaru) {
-                $namaField = $this->formatFieldName($key);
-                $perubahan[$key] = [
-                    'nama_field' => $namaField,
-                    'nilai_lama' => $nilaiLama,
-                    'nilai_baru' => $nilaiBaru,
-                ];
-            }
-        }
-
-        return $perubahan;
     }
 
     /**
@@ -206,35 +260,4 @@ class AktivitasController extends Controller
         return $formatted;
     }
 
-    /**
-     * Log activity - Called internally by application
-     * This is a static helper method that can be called from anywhere
-     */
-    public static function logActivity(
-        $pengguna,
-        $aksi,
-        $tipe,
-        $deskripsi,
-        $tabelYangDiubah = null,
-        $idRecordYangDiubah = null,
-        $dataSebelum = null,
-        $dataSesudah = null,
-        $ipAddress = null,
-        $userAgent = null
-    ): AktivitasSistem {
-        return AktivitasSistem::create([
-            'pengguna_id' => $pengguna->id,
-            'nama_pengguna' => $pengguna->nama,
-            'aksi' => $aksi,
-            'tipe' => $tipe,
-            'deskripsi' => $deskripsi,
-            'tabel_yang_diubah' => $tabelYangDiubah,
-            'id_record_yang_diubah' => $idRecordYangDiubah,
-            'data_sebelum' => $dataSebelum ? json_encode($dataSebelum) : null,
-            'data_sesudah' => $dataSesudah ? json_encode($dataSesudah) : null,
-            'ip_address' => $ipAddress,
-            'user_agent' => $userAgent,
-            'waktu_aksi' => now(),
-        ]);
-    }
 }

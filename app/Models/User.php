@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use App\Notifications\ResetPasswordNotification;
 
 class User extends Authenticatable implements MustVerifyEmail
 {
@@ -16,6 +17,11 @@ class User extends Authenticatable implements MustVerifyEmail
      * Nama tabel database
      */
     protected $table = 'pengguna';
+    
+    /**
+     * Primary key custom
+     */
+    protected $primaryKey = 'id_pengguna';
 
     /**
      * Nama kolom timestamp custom
@@ -32,7 +38,6 @@ class User extends Authenticatable implements MustVerifyEmail
         'nama',
         'email',
         'username',
-        'nik',
         'jobdesk',
         'mitra',
         'nomor_hp',
@@ -81,6 +86,23 @@ class User extends Authenticatable implements MustVerifyEmail
     public function getRememberTokenName()
     {
         return 'token_ingat';
+    }
+
+    /**
+     * Kirim notifikasi reset password dengan link menuju frontend (SPA).
+     */
+    public function sendPasswordResetNotification($token)
+    {
+        $this->notify(new ResetPasswordNotification((string) $token));
+    }
+
+    /**
+     * Get id attribute accessor (alias untuk id_pengguna)
+     * Untuk compatibility dengan frontend dan Laravel standard
+     */
+    public function getIdAttribute()
+    {
+        return $this->id_pengguna;
     }
 
     /**

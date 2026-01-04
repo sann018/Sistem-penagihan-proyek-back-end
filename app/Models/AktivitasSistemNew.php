@@ -126,28 +126,4 @@ class AktivitasSistem extends Model
     {
         return self::logCrud($userId, 'hapus_proyek', 'data_proyek', $pid, $namaProyek);
     }
-
-    /**
-     * Scope for filtering by user
-     */
-    public function scopeByUser($query, $userId)
-    {
-        return $query->where('id_pengguna', $userId);
-    }
-
-    /**
-     * Scope for filtering by table
-     */
-    public function scopeByTable($query, $table)
-    {
-        return $query->where('tabel_target', $table);
-    }
-
-    /**
-     * Scope for recent activities
-     */
-    public function scopeRecent($query)
-    {
-        return $query->with('pengguna')->orderBy('waktu_kejadian', 'desc');
-    }
 }
