@@ -24,8 +24,8 @@ class InvoicesTemplateExport implements FromCollection, WithHeadings, WithStyles
                 'Po Material',                  // jenis_po
                 '5500012345',                   // nomor_po
                 'Phase 1',                      // phase
-                'SUDAH CT',                     // status_ct
-                'SUDAH UT',                     // status_ut
+                'Belum CT',                     // status_ct
+                'Belum UT',                     // status_ut
                 'Sudah Rekap',                  // rekap_boq
                 '3000000',                      // rekon_nilai
                 'Sudah Rekon',                  // rekon_material
@@ -39,8 +39,8 @@ class InvoicesTemplateExport implements FromCollection, WithHeadings, WithStyles
                 'Po Jasa',                      // jenis_po
                 '5500012346',                   // nomor_po
                 'Phase 2',                      // phase
-                'BELUM CT',                     // status_ct
-                'BELUM UT',                     // status_ut
+                'Belum CT',                     // status_ct
+                'Belum UT',                     // status_ut
                 'Belum Rekap',                  // rekap_boq
                 '2500000',                      // rekon_nilai
                 'Belum Rekon',                  // rekon_material

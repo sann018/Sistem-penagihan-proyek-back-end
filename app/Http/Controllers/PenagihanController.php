@@ -244,8 +244,11 @@ class PenagihanController extends Controller
     public function store(Request $request): JsonResponse
     {
         $payload = $request->all();
-        if (array_key_exists('nomor_po', $payload) && trim((string) $payload['nomor_po']) === '') {
-            $payload['nomor_po'] = null;
+        if (array_key_exists('nomor_po', $payload)) {
+            $payload['nomor_po'] = $payload['nomor_po'] === null ? null : trim((string) $payload['nomor_po']);
+            if ($payload['nomor_po'] === '') {
+                $payload['nomor_po'] = null;
+            }
         }
 
         $validator = Validator::make($payload, [
@@ -272,7 +275,7 @@ class PenagihanController extends Controller
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation error',
+                'message' => 'Validasi gagal',
                 'errors' => $validator->errors()
             ], 422);
         }
@@ -345,8 +348,11 @@ class PenagihanController extends Controller
         }
 
         $payload = $request->all();
-        if (array_key_exists('nomor_po', $payload) && trim((string) $payload['nomor_po']) === '') {
-            $payload['nomor_po'] = null;
+        if (array_key_exists('nomor_po', $payload)) {
+            $payload['nomor_po'] = $payload['nomor_po'] === null ? null : trim((string) $payload['nomor_po']);
+            if ($payload['nomor_po'] === '') {
+                $payload['nomor_po'] = null;
+            }
         }
 
         $validator = Validator::make($payload, [
@@ -373,7 +379,7 @@ class PenagihanController extends Controller
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation error',
+                'message' => 'Validasi gagal',
                 'errors' => $validator->errors()
             ], 422);
         }
@@ -630,7 +636,7 @@ class PenagihanController extends Controller
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation error',
+                'message' => 'Validasi gagal',
                 'errors' => $validator->errors()
             ], 422);
         }
@@ -737,14 +743,22 @@ class PenagihanController extends Controller
     public function import(Request $request): JsonResponse
     {
         // Validasi file upload
-        $validator = Validator::make($request->all(), [
-            'file' => 'required|mimes:xlsx,xls,csv|max:10240', // Max 10MB
-        ]);
+        $validator = Validator::make(
+            $request->all(),
+            [
+                'file' => 'required|mimes:xlsx,xls,csv|max:10240', // Max 10MB
+            ],
+            [
+                'file.required' => 'File wajib diupload',
+                'file.mimes' => 'Format file harus .xlsx, .xls, atau .csv',
+                'file.max' => 'Ukuran file maksimal 10MB',
+            ]
+        );
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation error',
+                'message' => 'Validasi file gagal',
                 'errors' => $validator->errors()
             ], 422);
         }
@@ -773,6 +787,7 @@ class PenagihanController extends Controller
             
             if (!empty($failures)) {
                 $errors = [];
+                $detailedErrors = [];
                 
                 /** @var \Maatwebsite\Excel\Validators\Failure $failure */
                 foreach ($failures as $failure) {
@@ -782,6 +797,25 @@ class PenagihanController extends Controller
                         'errors' => $failure->errors(),
                         'values' => $failure->values()
                     ];
+
+                    $values = $failure->values();
+                    $attr = $failure->attribute();
+                    $detailLines = [];
+                    foreach ($failure->errors() as $msg) {
+                        $detailLines[] = ($attr ? "{$attr}: " : '') . $msg;
+                    }
+
+                    $detailedErrors[] = [
+                        'row' => $failure->row(),
+                        'error' => 'Validasi kolom',
+                        'details' => $detailLines,
+                        'data_preview' => [
+                            'pid' => $values['pid'] ?? '',
+                            'nama_proyek' => $values['nama_proyek'] ?? '',
+                            'nama_mitra' => $values['nama_mitra'] ?? '',
+                            'phase' => $values['phase'] ?? '',
+                        ],
+                    ];
                 }
 
                 // [📤 EXCEL_OPERATIONS] HITUNG FAILURE COUNT
@@ -789,13 +823,31 @@ class PenagihanController extends Controller
                 
                 Log::error("Import Excel validation failures: " . json_encode($errors));
 
+                $invalidHeaders = method_exists($import, 'getInvalidHeaders') ? $import->getInvalidHeaders() : [];
+                $errorDetails = [
+                    'total_rows_processed' => $import->getRowCount(),
+                    'detailed_errors' => $detailedErrors,
+                    'invalid_headers' => $invalidHeaders,
+                    'expected_headers' => \App\Imports\InvoicesImport::getExpectedHeaders(),
+                    'has_valid_data' => $import->hasValidData(),
+                ];
+
+                $statusCode = $importedCount === 0 ? 400 : 200;
+                $successFlag = $importedCount > 0;
+
                 return response()->json([
-                    'success' => true,
-                    'message' => "Import selesai: $importedCount berhasil, $failureCount gagal",
+                    'success' => $successFlag,
+                    'message' => $importedCount === 0
+                        ? "Import gagal: 0 berhasil, $failureCount gagal"
+                        : "Import selesai: $importedCount berhasil, $failureCount gagal",
+                    'warnings' => [
+                        $failureCount . ' baris gagal karena validasi (kolom wajib kosong/format salah)'
+                    ],
                     'success_count' => $importedCount,
                     'failed_count' => $failureCount,
-                    'validation_errors' => $errors
-                ], 200);
+                    'detailed_errors' => $detailedErrors,
+                    'validation_details' => $errorDetails,
+                ], $statusCode);
             }
 
             // Get import errors (parsing errors)
@@ -914,6 +966,7 @@ class PenagihanController extends Controller
         } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
             $failures = $e->failures();
             $errors = [];
+            $detailedErrors = [];
             
             foreach ($failures as $failure) {
                 $errors[] = [
@@ -922,11 +975,46 @@ class PenagihanController extends Controller
                     'errors' => $failure->errors(),
                     'values' => $failure->values()
                 ];
+
+                $values = $failure->values();
+                $attr = $failure->attribute();
+                $detailLines = [];
+                foreach ($failure->errors() as $msg) {
+                    $detailLines[] = ($attr ? "{$attr}: " : '') . $msg;
+                }
+
+                $detailedErrors[] = [
+                    'row' => $failure->row(),
+                    'error' => 'Validasi kolom',
+                    'details' => $detailLines,
+                    'data_preview' => [
+                        'pid' => $values['pid'] ?? '',
+                        'nama_proyek' => $values['nama_proyek'] ?? '',
+                        'nama_mitra' => $values['nama_mitra'] ?? '',
+                        'phase' => $values['phase'] ?? '',
+                    ],
+                ];
             }
+
+            $errorDetails = [
+                'total_rows_processed' => count($failures),
+                'detailed_errors' => $detailedErrors,
+                'expected_headers' => \App\Imports\InvoicesImport::getExpectedHeaders(),
+                'has_valid_data' => false,
+            ];
 
             return response()->json([
                 'success' => false,
                 'message' => 'Terdapat error validasi di file Excel',
+                'suggestions' => [
+                    'Periksa kolom wajib: Nama Proyek, Nama Mitra, PID, Phase',
+                    'Pastikan format angka Rekon Nilai hanya berisi angka',
+                    'Gunakan template agar header sesuai'
+                ],
+                'failed_count' => count($failures),
+                'success_count' => 0,
+                'detailed_errors' => $detailedErrors,
+                'validation_details' => $errorDetails,
                 'errors' => $errors
             ], 422);
 
