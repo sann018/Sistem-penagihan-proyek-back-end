@@ -815,6 +815,7 @@ class PenagihanController extends Controller
             $duplicatePids = $import->getDuplicatePids();
             $detailedErrors = $import->getDetailedErrors();
             $hasValidData = $import->hasValidData();
+            $invalidHeaders = $import->getInvalidHeaders();
             
             // [📤 EXCEL_OPERATIONS] NO DATA IMPORTED - PROVIDE DETAILED ERROR
             if ($importedCount === 0) {
@@ -823,6 +824,7 @@ class PenagihanController extends Controller
                     'duplicate_pids' => $duplicatePids,
                     'detailed_errors' => $detailedErrors,
                     'has_valid_data' => $hasValidData,
+                    'invalid_headers' => $invalidHeaders,
                     'expected_headers' => \App\Imports\InvoicesImport::getExpectedHeaders(),
                 ];
                 
@@ -830,20 +832,33 @@ class PenagihanController extends Controller
                 $mainError = 'Tidak ada data valid yang dapat diimport.';
                 $suggestions = [];
                 
+                if (!empty($invalidHeaders)) {
+                    $mainError = 'Format header Excel tidak sesuai.';
+                    $suggestions[] = '❌ Header tidak dikenali: ' . implode(', ', $invalidHeaders);
+                    $suggestions[] = '💡 Gunakan salah satu format header yang disediakan (case-insensitive)';
+                    $suggestions[] = '📋 Download template Excel untuk melihat format yang benar';
+                }
+                
                 if (!empty($duplicatePids)) {
                     $mainError = 'Semua data gagal diimport karena PID duplikat.';
-                    $suggestions[] = 'Periksa PID berikut yang sudah ada di database: ' . implode(', ', array_column($duplicatePids, 'pid'));
-                    $suggestions[] = 'Hapus atau ubah PID yang duplikat di file Excel Anda.';
+                    $dupPids = array_slice(array_column($duplicatePids, 'pid'), 0, 5);
+                    $suggestions[] = '🔴 PID duplikat ditemukan: ' . implode(', ', $dupPids) . (count($duplicatePids) > 5 ? '...' : '');
+                    $suggestions[] = '💡 PID harus unik. Hapus atau ubah PID yang duplikat di file Excel';
+                    $suggestions[] = '📊 Total ' . count($duplicatePids) . ' baris gagal karena duplikat';
                 }
                 
                 if (!empty($detailedErrors)) {
-                    $suggestions[] = 'Periksa format data di baris: ' . implode(', ', array_column($detailedErrors, 'row'));
+                    $errorRows = array_slice(array_column($detailedErrors, 'row'), 0, 5);
+                    $suggestions[] = '⚠️ Error validasi pada baris: ' . implode(', ', $errorRows) . (count($detailedErrors) > 5 ? '...' : '');
+                    $suggestions[] = '💡 Periksa kolom wajib: Nama Proyek, Nama Mitra, PID, Phase';
+                    $suggestions[] = '🔍 Detail error tersedia di response validation_details';
                 }
                 
                 if ($import->getRowCount() === 0) {
                     $mainError = 'File Excel tidak memiliki data atau format header salah.';
-                    $suggestions[] = 'Pastikan file Excel memiliki header yang sesuai.';
-                    $suggestions[] = 'Download template Excel untuk melihat format yang benar.';
+                    $suggestions[] = '📝 Pastikan file Excel memiliki baris header di baris pertama';
+                    $suggestions[] = '📋 Download template Excel untuk melihat format yang benar';
+                    $suggestions[] = '✅ Kolom wajib: Nama Proyek, Nama Mitra, PID, Phase';
                 }
                 
                 return response()->json([
@@ -975,5 +990,212 @@ class PenagihanController extends Controller
             new InvoicesTemplateExport(), 
             'invoice_template.xlsx'
         );
+    }
+
+    /**
+     * [📄 PROJECT_MANAGEMENT] [🗑️ BULK_DELETE] Hapus semua data proyek
+     * Dengan konfirmasi dan logging untuk audit trail
+     */
+    public function destroyAll(Request $request): JsonResponse
+    {
+        // Validasi konfirmasi password atau token untuk keamanan
+        $validator = Validator::make($request->all(), [
+            'confirmation' => 'required|string|in:DELETE_ALL_PROJECTS',
+            'exclude_prioritized' => 'sometimes|boolean', // Optional: skip data prioritas
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Konfirmasi tidak valid. Ketik "DELETE_ALL_PROJECTS" untuk konfirmasi.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $excludePrioritized = $request->input('exclude_prioritized', false);
+            
+            // Build query
+            $query = Penagihan::query();
+            
+            // Exclude prioritized if requested
+            if ($excludePrioritized) {
+                $query->where(function($q) {
+                    $q->whereNull('prioritas')
+                      ->orWhere('prioritas', 0);
+                });
+            }
+            
+            // Get count before delete for logging
+            $totalCount = $query->count();
+            
+            if ($totalCount === 0) {
+                $message = $excludePrioritized 
+                    ? 'Tidak ada data non-prioritas untuk dihapus' 
+                    : 'Tidak ada data proyek untuk dihapus';
+                    
+                return response()->json([
+                    'success' => false,
+                    'message' => $message
+                ], 404);
+            }
+
+            // Get sample data for audit (first 5 records)
+            $sampleData = $query->take(5)->get()->map(function ($item) {
+                return [
+                    'pid' => $item->pid,
+                    'nama_proyek' => $item->nama_proyek,
+                    'nama_mitra' => $item->nama_mitra,
+                    'prioritas' => $item->prioritas
+                ];
+            })->toArray();
+
+            // Count prioritized data that will be kept
+            $keptCount = 0;
+            if ($excludePrioritized) {
+                $keptCount = Penagihan::whereNotNull('prioritas')
+                    ->where('prioritas', '>', 0)
+                    ->count();
+            }
+
+            // Delete records
+            $query->delete();
+
+            $deleteMessage = $excludePrioritized 
+                ? "Menghapus {$totalCount} data proyek (mengecualikan {$keptCount} data prioritas)"
+                : "Menghapus SEMUA data proyek ({$totalCount} records)";
+
+            // Log activity
+            $this->logActivity(
+                $request,
+                'Hapus Semua Proyek',
+                'bulk_delete',
+                $deleteMessage,
+                'penagihan',
+                null,
+                [
+                    'total_deleted' => $totalCount, 
+                    'exclude_prioritized' => $excludePrioritized,
+                    'kept_count' => $keptCount,
+                    'sample_data' => $sampleData
+                ],
+                null
+            );
+
+            Log::warning("BULK DELETE: User {$request->user()->name} deleted {$totalCount} project records", [
+                'user_id' => $request->user()->id,
+                'total_deleted' => $totalCount,
+                'exclude_prioritized' => $excludePrioritized,
+                'kept_count' => $keptCount,
+                'sample_data' => $sampleData
+            ]);
+
+            $responseMessage = $excludePrioritized && $keptCount > 0
+                ? "Berhasil menghapus {$totalCount} data proyek. {$keptCount} data prioritas tidak dihapus."
+                : "Berhasil menghapus {$totalCount} data proyek";
+
+            return response()->json([
+                'success' => true,
+                'message' => $responseMessage,
+                'total_deleted' => $totalCount,
+                'kept_count' => $keptCount
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Bulk delete error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menghapus data: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * [📄 PROJECT_MANAGEMENT] [🗑️ BULK_DELETE] Hapus data proyek terpilih (selected)
+     * Menghapus multiple data berdasarkan array PID
+     */
+    public function destroySelected(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'pids' => 'required|array|min:1',
+            'pids.*' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data tidak valid',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $pids = $request->input('pids');
+            
+            // Get data before delete for logging
+            $dataToDelete = Penagihan::whereIn('pid', $pids)->get();
+            
+            if ($dataToDelete->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tidak ada data yang ditemukan'
+                ], 404);
+            }
+
+            $totalCount = $dataToDelete->count();
+            
+            // Create sample for audit
+            $sampleData = $dataToDelete->take(5)->map(function ($item) {
+                return [
+                    'pid' => $item->pid,
+                    'nama_proyek' => $item->nama_proyek,
+                    'nama_mitra' => $item->nama_mitra
+                ];
+            })->toArray();
+
+            // Delete records
+            Penagihan::whereIn('pid', $pids)->delete();
+
+            // Log activity
+            $this->logActivity(
+                $request,
+                'Hapus Proyek Terpilih',
+                'bulk_delete_selected',
+                "Menghapus {$totalCount} data proyek terpilih",
+                'penagihan',
+                null,
+                [
+                    'total_deleted' => $totalCount,
+                    'pids' => $pids,
+                    'sample_data' => $sampleData
+                ],
+                null
+            );
+
+            Log::info("BULK DELETE SELECTED: User {$request->user()->name} deleted {$totalCount} selected records", [
+                'user_id' => $request->user()->id,
+                'total_deleted' => $totalCount,
+                'pids' => $pids
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Berhasil menghapus {$totalCount} data proyek",
+                'total_deleted' => $totalCount
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Bulk delete selected error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menghapus data: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 }

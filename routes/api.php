@@ -98,6 +98,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/import', [PenagihanController::class, 'import']);
         });
 
+        // 4️⃣ Bulk Delete - Hapus semua data (super_admin ONLY)
+        Route::middleware('role:super_admin')->group(function () {
+            Route::delete('/delete-all', [PenagihanController::class, 'destroyAll']);
+            Route::delete('/delete-selected', [PenagihanController::class, 'destroySelected']);
+        });
+
         // Read access (semua user yang login bisa lihat)
         Route::get('/', [PenagihanController::class, 'index']);
 
