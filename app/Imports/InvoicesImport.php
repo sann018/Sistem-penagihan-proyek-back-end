@@ -29,6 +29,10 @@ class InvoicesImport implements
     private array $failures = [];
     private int $successCount = 0;
     private int $rowCount = 0;
+    private array $duplicatePids = [];
+    private array $missingHeaders = [];
+    private array $detailedErrors = [];
+    private bool $hasValidData = false;
 
     /**
      * @param array $row
@@ -46,12 +50,30 @@ class InvoicesImport implements
         }
 
         try {
+            $pid = trim($row['pid'] ?? '');
+            
+            // Check PID duplikat di database
+            if (!empty($pid)) {
+                $exists = Penagihan::where('pid', $pid)->exists();
+                if ($exists) {
+                    $this->duplicatePids[] = [
+                        'row' => $this->rowCount + 1,
+                        'pid' => $pid,
+                        'nama_proyek' => trim($row['nama_proyek'] ?? '')
+                    ];
+                    Log::warning("Row {$this->rowCount} skipped: PID duplikat - {$pid}");
+                    return null;
+                }
+            }
+            
+            $this->hasValidData = true;
+            
             $penagihan = new Penagihan([
                 'nama_proyek'         => trim($row['nama_proyek'] ?? ''),
                 'nama_mitra'          => trim($row['nama_mitra'] ?? ''),
-                'pid'                 => trim($row['pid'] ?? ''),
+                'pid'                 => $pid,
                 'jenis_po'            => trim($row['jenis_po'] ?? ''),
-                'nomor_po'            => trim($row['nomor_po'] ?? ''),
+                'nomor_po'            => ($v = trim($row['nomor_po'] ?? '')) !== '' ? $v : null,
                 'phase'               => trim($row['phase'] ?? ''),
                 'status_ct'           => trim($row['status_ct'] ?? ''),
                 'status_ut'           => trim($row['status_ut'] ?? ''),
@@ -70,6 +92,11 @@ class InvoicesImport implements
             return $penagihan;
         } catch (\Exception $e) {
             Log::error("Row {$this->rowCount} error: {$e->getMessage()}", ['row_data' => $row]);
+            $this->detailedErrors[] = [
+                'row' => $this->rowCount + 1,
+                'error' => $e->getMessage(),
+                'data' => $row
+            ];
             return null;
         }
     }
@@ -117,7 +144,7 @@ class InvoicesImport implements
             'nama_mitra' => 'required|string|max:255',
             'pid' => 'required|string',
             'jenis_po' => 'nullable|string|max:255',
-            'nomor_po' => 'required|string|max:255',
+            'nomor_po' => 'nullable|string|max:255',
             'phase' => 'required|string|max:255',
             'status_ct' => 'nullable|string|max:255',
             'status_ut' => 'nullable|string|max:255',
@@ -126,6 +153,20 @@ class InvoicesImport implements
             'rekon_material' => 'nullable|string|max:255',
             'pelurusan_material' => 'nullable|string|max:255',
             'status_procurement' => 'nullable|string|max:255',
+        ];
+    }
+    
+    /**
+     * Custom validation messages
+     */
+    public function customValidationMessages(): array
+    {
+        return [
+            'nama_proyek.required' => 'Nama Proyek wajib diisi',
+            'nama_mitra.required' => 'Nama Mitra wajib diisi',
+            'pid.required' => 'PID wajib diisi',
+            'phase.required' => 'Phase wajib diisi',
+            'rekon_nilai.numeric' => 'Rekon Nilai harus berupa angka',
         ];
     }
 
@@ -197,5 +238,51 @@ class InvoicesImport implements
     public function getRowCount(): int
     {
         return $this->rowCount;
+    }
+    
+    /**
+     * Get duplicate PIDs
+     */
+    public function getDuplicatePids(): array
+    {
+        return $this->duplicatePids;
+    }
+    
+    /**
+     * Get detailed errors
+     */
+    public function getDetailedErrors(): array
+    {
+        return $this->detailedErrors;
+    }
+    
+    /**
+     * Check if has valid data
+     */
+    public function hasValidData(): bool
+    {
+        return $this->hasValidData;
+    }
+    
+    /**
+     * Get expected headers
+     */
+    public static function getExpectedHeaders(): array
+    {
+        return [
+            'nama_proyek' => 'Nama Proyek (wajib)',
+            'nama_mitra' => 'Nama Mitra (wajib)',
+            'pid' => 'PID (wajib, harus unique)',
+            'jenis_po' => 'Jenis PO',
+            'nomor_po' => 'Nomor PO',
+            'phase' => 'Phase (wajib)',
+            'status_ct' => 'Status CT',
+            'status_ut' => 'Status UT',
+            'rekap_boq' => 'Rekap BOQ',
+            'rekon_nilai' => 'Rekon Nilai (angka)',
+            'rekon_material' => 'Rekon Material',
+            'pelurusan_material' => 'Pelurusan Material',
+            'status_procurement' => 'Status Procurement',
+        ];
     }
 }

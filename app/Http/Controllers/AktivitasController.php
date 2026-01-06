@@ -28,6 +28,7 @@ class AktivitasController extends Controller
                 'a.aksi',
                 'a.tabel_target',
                 'a.id_target',
+                'a.nama_target',
                 'a.detail_perubahan',
                 'a.keterangan',
                 'a.alamat_ip',
@@ -102,7 +103,8 @@ class AktivitasController extends Controller
                     ->orWhere('a.keterangan', 'like', "%{$search}%")
                     ->orWhere('a.aksi', 'like', "%{$search}%")
                     ->orWhere('a.tabel_target', 'like', "%{$search}%")
-                    ->orWhere('a.id_target', 'like', "%{$search}%");
+                    ->orWhere('a.id_target', 'like', "%{$search}%")
+                    ->orWhere('a.nama_target', 'like', "%{$search}%");
             });
         }
 

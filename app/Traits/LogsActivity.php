@@ -4,6 +4,7 @@ namespace App\Traits;
 
 use App\Models\AktivitasSistem;
 use App\Models\LogAktivitas;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 
@@ -97,8 +98,54 @@ trait LogsActivity
 
         // Best-effort nama target
         $namaTarget = null;
-        if (is_array($dataSesudah)) {
-            $namaTarget = $dataSesudah['nama_proyek'] ?? $dataSesudah['nama'] ?? null;
+        if (is_array($dataSesudah) || is_array($dataSebelum)) {
+            $namaTarget = ($dataSesudah['nama_proyek'] ?? null)
+                ?? ($dataSesudah['nama'] ?? null)
+                ?? ($dataSebelum['nama_proyek'] ?? null)
+                ?? ($dataSebelum['nama'] ?? null)
+                ?? null;
+        }
+
+        // Fallback khusus: tabel pengguna sering hanya mengubah role/password tanpa menyertakan nama
+        if (!$namaTarget && ($tabelNormalized === 'pengguna' || $tabelNormalized === 'users') && $idTarget !== 'unknown') {
+            $idInt = (int) $idTarget;
+            if ($idInt > 0) {
+                $targetUser = User::where('id_pengguna', $idInt)->first();
+                $namaTarget = $targetUser?->nama;
+            }
+        }
+
+        // Format khusus: untuk tabel pengguna tampilkan "username - nama lengkap"
+        if (($tabelNormalized === 'pengguna' || $tabelNormalized === 'users') && $idTarget !== 'unknown') {
+            $usernameTarget = null;
+            $namaLengkapTarget = null;
+
+            if (is_array($dataSesudah) || is_array($dataSebelum)) {
+                $usernameTarget = ($dataSesudah['username'] ?? null)
+                    ?? ($dataSebelum['username'] ?? null)
+                    ?? null;
+
+                $namaLengkapTarget = ($dataSesudah['nama'] ?? null)
+                    ?? ($dataSebelum['nama'] ?? null)
+                    ?? null;
+            }
+
+            // Jika masih kosong, ambil dari DB
+            if ((!$usernameTarget || !$namaLengkapTarget) && isset($targetUser) && $targetUser) {
+                $usernameTarget = $usernameTarget ?: ($targetUser->username ?: $targetUser->email);
+                $namaLengkapTarget = $namaLengkapTarget ?: $targetUser->nama;
+            }
+
+            // Jika $namaTarget sudah ada (hasil best-effort), gunakan sebagai nama lengkap
+            if (!$namaLengkapTarget && $namaTarget) {
+                $namaLengkapTarget = $namaTarget;
+            }
+
+            if ($usernameTarget || $namaLengkapTarget) {
+                $left = $usernameTarget ?: '-';
+                $right = $namaLengkapTarget ?: '-';
+                $namaTarget = trim($left . ' - ' . $right);
+            }
         }
 
         return AktivitasSistem::create([

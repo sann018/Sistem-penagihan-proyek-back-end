@@ -243,12 +243,17 @@ class PenagihanController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $payload = $request->all();
+        if (array_key_exists('nomor_po', $payload) && trim((string) $payload['nomor_po']) === '') {
+            $payload['nomor_po'] = null;
+        }
+
+        $validator = Validator::make($payload, [
             'nama_proyek' => 'required|string|max:255',
             'nama_mitra' => 'required|string|max:255',
             'pid' => 'required|string|unique:data_proyek,pid',
             'jenis_po' => 'nullable|string|max:255',
-            'nomor_po' => 'required|string|max:255|unique:data_proyek,nomor_po',
+            'nomor_po' => 'nullable|string|max:255|unique:data_proyek,nomor_po',
             'phase' => 'required|string|max:255',
             'rekon_nilai' => 'required|numeric|min:0',
             'status_ct' => 'nullable|string|max:255',
@@ -273,7 +278,7 @@ class PenagihanController extends Controller
         }
 
         // Prepare data
-        $data = $request->all();
+        $data = $payload;
         
         // Auto-set timer ke 30 hari jika tidak ada input
         if (empty($data['estimasi_durasi_hari'])) {
@@ -339,12 +344,17 @@ class PenagihanController extends Controller
             ], 404);
         }
 
-        $validator = Validator::make($request->all(), [
+        $payload = $request->all();
+        if (array_key_exists('nomor_po', $payload) && trim((string) $payload['nomor_po']) === '') {
+            $payload['nomor_po'] = null;
+        }
+
+        $validator = Validator::make($payload, [
             'nama_proyek' => 'sometimes|required|string|max:255',
             'nama_mitra' => 'sometimes|required|string|max:255',
             'pid' => 'sometimes|required|string|unique:data_proyek,pid,' . $id . ',pid',
             'jenis_po' => 'nullable|string|max:255',
-            'nomor_po' => 'sometimes|required|string|max:255|unique:data_proyek,nomor_po,' . $id . ',pid',
+            'nomor_po' => 'sometimes|nullable|string|max:255|unique:data_proyek,nomor_po,' . $id . ',pid',
             'phase' => 'sometimes|required|string|max:255',
             'rekon_nilai' => 'sometimes|required|numeric|min:0',
             'status_ct' => 'nullable|string|max:255',
@@ -801,20 +811,70 @@ class PenagihanController extends Controller
                 ], 400);
             }
 
-            // [📤 EXCEL_OPERATIONS] SEMUA BARIS BERHASIL DIIMPORT
+            // [📤 EXCEL_OPERATIONS] COLLECT DETAILED VALIDATION INFO
+            $duplicatePids = $import->getDuplicatePids();
+            $detailedErrors = $import->getDetailedErrors();
+            $hasValidData = $import->hasValidData();
+            
+            // [📤 EXCEL_OPERATIONS] NO DATA IMPORTED - PROVIDE DETAILED ERROR
             if ($importedCount === 0) {
+                $errorDetails = [
+                    'total_rows_processed' => $import->getRowCount(),
+                    'duplicate_pids' => $duplicatePids,
+                    'detailed_errors' => $detailedErrors,
+                    'has_valid_data' => $hasValidData,
+                    'expected_headers' => \App\Imports\InvoicesImport::getExpectedHeaders(),
+                ];
+                
+                // Determine main error reason
+                $mainError = 'Tidak ada data valid yang dapat diimport.';
+                $suggestions = [];
+                
+                if (!empty($duplicatePids)) {
+                    $mainError = 'Semua data gagal diimport karena PID duplikat.';
+                    $suggestions[] = 'Periksa PID berikut yang sudah ada di database: ' . implode(', ', array_column($duplicatePids, 'pid'));
+                    $suggestions[] = 'Hapus atau ubah PID yang duplikat di file Excel Anda.';
+                }
+                
+                if (!empty($detailedErrors)) {
+                    $suggestions[] = 'Periksa format data di baris: ' . implode(', ', array_column($detailedErrors, 'row'));
+                }
+                
+                if ($import->getRowCount() === 0) {
+                    $mainError = 'File Excel tidak memiliki data atau format header salah.';
+                    $suggestions[] = 'Pastikan file Excel memiliki header yang sesuai.';
+                    $suggestions[] = 'Download template Excel untuk melihat format yang benar.';
+                }
+                
                 return response()->json([
                     'success' => false,
-                    'message' => 'Import gagal: Tidak ada data valid yang diimport. Pastikan file Excel memiliki header dan data dengan benar.',
+                    'message' => $mainError,
+                    'suggestions' => $suggestions,
                     'success_count' => 0,
-                    'failed_count' => 0,
-                    'debug_info' => [
-                        'before_count' => $beforeCount,
-                        'after_count' => $afterCount,
-                        'row_processed' => $import->getRowCount(),
-                        'rows_success' => $import->getSuccessCount()
-                    ]
+                    'failed_count' => $import->getRowCount(),
+                    'validation_details' => $errorDetails
                 ], 400);
+            }
+            
+            // [📤 EXCEL_OPERATIONS] PARTIAL SUCCESS WITH WARNINGS
+            if (!empty($duplicatePids) || !empty($detailedErrors)) {
+                $warnings = [];
+                if (!empty($duplicatePids)) {
+                    $warnings[] = count($duplicatePids) . ' data dilewati karena PID duplikat';
+                }
+                if (!empty($detailedErrors)) {
+                    $warnings[] = count($detailedErrors) . ' data gagal karena error validasi';
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'message' => "Import berhasil: $importedCount data ditambahkan",
+                    'warnings' => $warnings,
+                    'success_count' => $importedCount,
+                    'failed_count' => count($duplicatePids) + count($detailedErrors),
+                    'duplicate_pids' => $duplicatePids,
+                    'detailed_errors' => $detailedErrors
+                ], 200);
             }
 
             // Log import activity
