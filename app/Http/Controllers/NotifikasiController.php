@@ -10,6 +10,11 @@ use Illuminate\Http\Request;
 
 class NotifikasiController extends Controller
 {
+    private const FINAL_PROCUREMENT_STATUSES = [
+        'sekuler ttd',
+        'scan dokumen mitra',
+        'otw reg',
+    ];
     /**
      * List notifikasi untuk user login.
      * Query params:
@@ -66,7 +71,7 @@ class NotifikasiController extends Controller
         $stalePids = Notifikasi::query()
             ->where('id_penerima', $userId)
             ->where('referensi_tabel', 'data_proyek')
-            ->whereIn('jenis_notifikasi', ['h_minus_7', 'h_minus_3', 'h_minus_1', 'jatuh_tempo', 'prioritas_berubah'])
+            ->whereIn('jenis_notifikasi', ['h_minus_7', 'h_minus_5', 'h_minus_3', 'h_minus_1', 'jatuh_tempo', 'prioritas_berubah'])
             ->pluck('referensi_id')
             ->unique()
             ->values()
@@ -86,17 +91,34 @@ class NotifikasiController extends Controller
                     'status_procurement',
                 ]);
 
+            // Hapus notifikasi yang referensi proyeknya sudah tidak ada.
+            // Tanpa ini, notifikasi bisa "nyangkut" terus walau proyek dihapus.
+            $foundPids = $cleanupProjects->pluck('pid')->map(fn ($v) => (string) $v)->all();
+            $missingPids = array_values(array_diff(array_map('strval', $stalePids), $foundPids));
+            if (!empty($missingPids)) {
+                Notifikasi::query()
+                    ->where('id_penerima', $userId)
+                    ->where('referensi_tabel', 'data_proyek')
+                    ->whereIn('referensi_id', $missingPids)
+                    ->whereIn('jenis_notifikasi', ['h_minus_7', 'h_minus_5', 'h_minus_3', 'h_minus_1', 'jatuh_tempo', 'prioritas_berubah'])
+                    ->delete();
+            }
+
             foreach ($cleanupProjects as $p) {
+                $proc = strtolower(trim((string) ($p->status_procurement ?? '')));
+                $isFinalProcurement = in_array($proc, self::FINAL_PROCUREMENT_STATUSES, true);
+
                 $shouldRemove = ($p->status ?? null) !== 'pending'
                     || (method_exists($p, 'isCompleted') && $p->isCompleted())
-                    || (method_exists($p, 'calculateProgressPercent') && $p->calculateProgressPercent() >= 100);
+                    || (method_exists($p, 'calculateProgressPercent') && $p->calculateProgressPercent() >= 100)
+                    || $isFinalProcurement;
 
                 if ($shouldRemove) {
                     Notifikasi::query()
                         ->where('id_penerima', $userId)
                         ->where('referensi_tabel', 'data_proyek')
                         ->where('referensi_id', (string) $p->pid)
-                        ->whereIn('jenis_notifikasi', ['h_minus_7', 'h_minus_3', 'h_minus_1', 'jatuh_tempo', 'prioritas_berubah'])
+                        ->whereIn('jenis_notifikasi', ['h_minus_7', 'h_minus_5', 'h_minus_3', 'h_minus_1', 'jatuh_tempo', 'prioritas_berubah'])
                         ->delete();
                 }
             }
@@ -104,21 +126,33 @@ class NotifikasiController extends Controller
 
         $now = now();
         $today = $now->copy()->startOfDay();
-        $h7 = $today->copy()->addDays(7)->endOfDay();
+        $h5 = $today->copy()->addDays(5)->endOfDay();
 
         $projects = Penagihan::query()
             ->where('status', 'pending')
-            ->where(function ($q) use ($today, $h7) {
-                // Overdue or due within 7 days
-                $q->whereBetween('tanggal_jatuh_tempo', [$today, $h7])
-                  ->orWhere('tanggal_jatuh_tempo', '<', $today)
-                  // Or priority projects
-                  ->orWhereNotNull('prioritas');
+            ->where(function ($q) use ($today, $h5) {
+                // Overdue or due within 5 days (by explicit due date)
+                $q->where(function ($qq) use ($today, $h5) {
+                    $qq->whereNotNull('tanggal_jatuh_tempo')
+                        ->where(function ($qqq) use ($today, $h5) {
+                            $qqq->whereBetween('tanggal_jatuh_tempo', [$today, $h5])
+                                ->orWhere('tanggal_jatuh_tempo', '<', $today);
+                        });
+                })
+                // Or projects that can compute deadline from start date + estimate
+                ->orWhere(function ($qq) {
+                    $qq->whereNotNull('tanggal_mulai')
+                        ->whereNotNull('estimasi_durasi_hari');
+                })
+                // Or priority projects
+                ->orWhereNotNull('prioritas');
             })
             ->get([
                 'pid',
                 'nama_proyek',
                 'prioritas',
+                'tanggal_mulai',
+                'estimasi_durasi_hari',
                 'tanggal_jatuh_tempo',
                 'status',
                 'status_ct',
@@ -134,17 +168,21 @@ class NotifikasiController extends Controller
                 ? $project->calculateProgressPercent()
                 : 0;
 
+            $proc = strtolower(trim((string) ($project->status_procurement ?? '')));
+            $isFinalProcurement = in_array($proc, self::FINAL_PROCUREMENT_STATUSES, true);
+
             // Jika proyek sudah selesai, hapus notifikasi terkait (jangan buat lagi)
             if (
                 ($project->status ?? null) !== 'pending'
                 || (method_exists($project, 'isCompleted') && $project->isCompleted())
                 || $progress >= 100
+                || $isFinalProcurement
             ) {
                 Notifikasi::query()
                     ->where('id_penerima', $userId)
                     ->where('referensi_tabel', 'data_proyek')
                     ->where('referensi_id', (string) $project->pid)
-                    ->whereIn('jenis_notifikasi', ['h_minus_7', 'h_minus_3', 'h_minus_1', 'jatuh_tempo', 'prioritas_berubah'])
+                    ->whereIn('jenis_notifikasi', ['h_minus_7', 'h_minus_5', 'h_minus_3', 'h_minus_1', 'jatuh_tempo', 'prioritas_berubah'])
                     ->delete();
                 continue;
             }
@@ -153,8 +191,16 @@ class NotifikasiController extends Controller
             $nama = (string) ($project->nama_proyek ?? $pid);
 
             // Deadline alerts
+            $due = null;
             if ($project->tanggal_jatuh_tempo) {
                 $due = Carbon::parse($project->tanggal_jatuh_tempo)->startOfDay();
+            } elseif ($project->tanggal_mulai && $project->estimasi_durasi_hari) {
+                $due = Carbon::parse($project->tanggal_mulai)
+                    ->addDays((int) $project->estimasi_durasi_hari)
+                    ->startOfDay();
+            }
+
+            if ($due) {
                 $days = $today->diffInDays($due, false);
 
                 $dueLabel = $due->format('d M Y');
@@ -178,23 +224,23 @@ class NotifikasiController extends Controller
 
                 if ($days < 0) {
                     $jenis = 'jatuh_tempo';
-                    $prioritas = 4;
+                    $prioritas = 1;
                     $judul = 'Peringatan: Proyek melewati jatuh tempo';
                     $isi = "Proyek {$nama} (PID: {$pid}) sudah melewati jatuh tempo ({$dueLabel}). Progres saat ini {$progressLabel}. Segera selesaikan proyek ini.";
                 } elseif ($days <= 1) {
                     $jenis = 'h_minus_1';
-                    $prioritas = 4;
+                    $prioritas = 1;
                     $judul = 'Reminder: Tenggat proyek sangat dekat (H-1)';
                     $isi = "Proyek {$nama} (PID: {$pid}) jatuh tempo {$whenLabel} ({$dueLabel}). Progres saat ini {$progressLabel}. Segera percepat penyelesaian.";
                 } elseif ($days <= 3) {
                     $jenis = 'h_minus_3';
-                    $prioritas = 3;
+                    $prioritas = 1;
                     $judul = 'Reminder: Tenggat proyek mendekat (H-3)';
                     $isi = "Proyek {$nama} (PID: {$pid}) jatuh tempo {$whenLabel} ({$dueLabel}). Progres saat ini {$progressLabel}. Pastikan progres sesuai target.";
-                } elseif ($days <= 7) {
-                    $jenis = 'h_minus_7';
+                } elseif ($days <= 5) {
+                    $jenis = 'h_minus_5';
                     $prioritas = 2;
-                    $judul = 'Reminder: Tenggat proyek (H-7)';
+                    $judul = 'Reminder: Tenggat proyek (H-5)';
                     $isi = "Proyek {$nama} (PID: {$pid}) jatuh tempo {$whenLabel} ({$dueLabel}). Progres saat ini {$progressLabel}.";
                 }
 
@@ -215,6 +261,14 @@ class NotifikasiController extends Controller
                         ]
                     );
                 }
+            } else {
+                // Jika tidak ada tanggal jatuh tempo (dan tidak bisa dihitung), hapus notifikasi deadline yang mungkin sudah ada.
+                Notifikasi::query()
+                    ->where('id_penerima', $userId)
+                    ->where('referensi_tabel', 'data_proyek')
+                    ->where('referensi_id', $pid)
+                    ->whereIn('jenis_notifikasi', ['h_minus_7', 'h_minus_5', 'h_minus_3', 'h_minus_1', 'jatuh_tempo'])
+                    ->delete();
             }
 
             // Priority project alerts
@@ -235,6 +289,14 @@ class NotifikasiController extends Controller
                         'prioritas' => $priorityLevel,
                     ]
                 );
+            } else {
+                // Jika prioritas sudah dibatalkan, hapus notifikasi prioritas yang mungkin masih tersisa.
+                Notifikasi::query()
+                    ->where('id_penerima', $userId)
+                    ->where('referensi_tabel', 'data_proyek')
+                    ->where('referensi_id', $pid)
+                    ->where('jenis_notifikasi', 'prioritas_berubah')
+                    ->delete();
             }
         }
     }

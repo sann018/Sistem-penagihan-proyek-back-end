@@ -9,9 +9,11 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Validation\Rule;
 use App\Traits\LogsActivity;
 
 class AuthController extends Controller
@@ -47,6 +49,32 @@ class AuthController extends Controller
                 Password::min(8)->mixedCase()->numbers()->symbols(),
             ],
             'role' => 'required|in:super_admin,admin,viewer',
+            // Role "mitra" tidak digunakan lagi.
+            // Akun mitra memakai role=viewer + field mitra terisi.
+            'mitra' => [
+                'nullable',
+                'string',
+                'max:255',
+                function ($attribute, $value, $fail) {
+                    if ($value === null) return;
+                    $mitra = trim((string) $value);
+                    if ($mitra === '') return;
+
+                    // Special mitra: Telkom Akses boleh (akses semua data untuk viewer yang dipetakan).
+                    // Accept variants like "PT Telkom Akses" / "PT. Telkom Akses".
+                    if (preg_match('/telkom\s*akses/i', $mitra) === 1) return;
+
+                    $exists = DB::table('data_proyek')
+                        ->whereNotNull('nama_mitra')
+                        ->whereRaw("TRIM(nama_mitra) != ''")
+                        ->where('nama_mitra', $mitra)
+                        ->exists();
+
+                    if (!$exists) {
+                        $fail('Nama Mitra tidak valid.');
+                    }
+                },
+            ],
         ]);
 
         if ($validator->fails()) {
@@ -59,12 +87,19 @@ class AuthController extends Controller
 
         $username = strtolower(trim((string) $request->username));
 
+        // Mitra boleh di-set oleh super_admin saat membuat akun.
+        $mitraValue = null;
+        if ($request->has('mitra')) {
+            $mitraValue = $request->mitra === null ? null : trim((string) $request->mitra);
+        }
+
         $user = User::create([
             'nama' => $request->name,
             'email' => $request->email,
             'username' => $username,
             'kata_sandi' => Hash::make($request->password),
             'peran' => $request->role,
+            'mitra' => $mitraValue,
             'email_terverifikasi_pada' => now(), // Internal app, auto-verify
         ]);
 
@@ -150,6 +185,23 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Email/Username atau password salah'
             ], 401);
+        }
+
+        // 🔒 SECURITY: Akun yang dinonaktifkan tidak boleh login.
+        if (($user->aktif ?? true) === false) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akun dinonaktifkan. Hubungi Super Admin.'
+            ], 403);
+        }
+
+        // 🔒 SECURITY: Batasi role yang boleh login.
+        // Mencegah akun legacy/role tidak dikenal (mis. "read_only") dapat mengakses endpoint read yang tidak terproteksi role.
+        if (!in_array((string) ($user->peran ?? ''), ['super_admin', 'admin', 'viewer'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akses ditolak: role akun tidak diizinkan.'
+            ], 403);
         }
 
         // [🔐 AUTH_SYSTEM] Update last login timestamp
@@ -244,6 +296,7 @@ class AuthController extends Controller
                 'name' => $user->nama,
                 'email' => $user->email,
                 'role' => $user->peran,
+                'mitra' => $user->mitra,
                 'photo' => $user->foto ? url('storage/' . $user->foto) : null,
                 'created_at' => $user->dibuat_pada,
             ]

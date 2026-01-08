@@ -4,6 +4,8 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Auth\AuthenticationException;
+use Illuminate\Http\Request;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -14,6 +16,10 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // Enable CORS handling for API requests (fixes browser CORS blocks from frontend dev server)
         $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
+
+        // API-only app: unauthenticated requests should return 401 JSON,
+        // not redirect to a (non-existent) named route like "login".
+        $middleware->redirectGuestsTo(fn () => null);
 
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
@@ -45,5 +51,11 @@ return Application::configure(basePath: dirname(__DIR__))
                  });
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // API-only app: always return JSON for unauthenticated requests.
+        // Prevents Laravel from trying to redirect to a non-existent named route like "login".
+        $exceptions->render(function (AuthenticationException $e, Request $request) {
+            return response()->json([
+                'message' => $e->getMessage() ?: 'Unauthenticated.',
+            ], 401);
+        });
     })->create();

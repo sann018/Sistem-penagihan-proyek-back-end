@@ -12,6 +12,115 @@ use Carbon\Carbon;
 class DataCleanupController extends Controller
 {
     /**
+     * Resolve cleanup date range from request.
+     *
+     * Supported modes:
+     * - day:    { mode: 'day', date: 'YYYY-MM-DD' }
+     * - week:   { mode: 'week', date: 'YYYY-MM-DD' }  (week of the provided date)
+     * - month:  { mode: 'month', bulan: 1-12, tahun: 1970-2100 } (default if mode omitted)
+     * - year:   { mode: 'year', tahun: 1970-2100 }
+     *
+     * Backward compatible: if mode is omitted, it behaves like month with {bulan,tahun}.
+     *
+     * Returns: [mode, start, end, endRange]
+     * - end: requested end of period
+     * - endRange: bounded by now for current (partial) periods
+     */
+    private function resolveRange(Request $request): array
+    {
+        $mode = (string) ($request->get('mode') ?? 'month');
+        $mode = strtolower(trim($mode));
+
+        $validator = match ($mode) {
+            'day', 'week' => Validator::make($request->all(), [
+                'date' => 'required|date_format:Y-m-d',
+            ]),
+            'year' => Validator::make($request->all(), [
+                'tahun' => 'required|integer|min:1970|max:2100',
+            ]),
+            'month' => Validator::make($request->all(), [
+                'bulan' => 'required|integer|min:1|max:12',
+                'tahun' => 'required|integer|min:1970|max:2100',
+            ]),
+            default => Validator::make([], []),
+        };
+
+        if (!in_array($mode, ['day', 'week', 'month', 'year'], true)) {
+            throw new \InvalidArgumentException('Mode tidak valid. Gunakan day/week/month/year.');
+        }
+
+        if ($validator->fails()) {
+            $messages = $validator->errors()->all();
+            throw new \InvalidArgumentException($messages[0] ?? 'Validasi gagal');
+        }
+
+        $now = Carbon::now();
+
+        if ($mode === 'day') {
+            $date = Carbon::createFromFormat('Y-m-d', (string) $request->get('date'));
+            $start = $date->copy()->startOfDay();
+            $end = $date->copy()->endOfDay();
+        } elseif ($mode === 'week') {
+            $date = Carbon::createFromFormat('Y-m-d', (string) $request->get('date'));
+            $start = $date->copy()->startOfWeek(Carbon::MONDAY)->startOfDay();
+            $end = $date->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay();
+        } elseif ($mode === 'year') {
+            $tahun = (int) $request->get('tahun');
+            $start = Carbon::create($tahun, 1, 1)->startOfYear();
+            $end = Carbon::create($tahun, 1, 1)->endOfYear();
+        } else { // month
+            $bulan = (int) $request->get('bulan');
+            $tahun = (int) $request->get('tahun');
+            $start = Carbon::create($tahun, $bulan, 1)->startOfMonth();
+            $end = Carbon::create($tahun, $bulan, 1)->endOfMonth();
+        }
+
+        // Block only if the chosen period starts in the future.
+        if ($start->greaterThan($now)) {
+            throw new \RuntimeException('Tidak dapat menghapus data masa depan.');
+        }
+
+        // Allow current partial period by bounding end to now.
+        $endRange = $end->greaterThan($now) ? $now : $end;
+
+        return [$mode, $start, $end, $endRange];
+    }
+
+    /**
+     * Batch delete helper to avoid long locks/timeouts.
+     */
+    private function deleteInBatches(string $table, string $timeColumn, string $idColumn, Carbon $start, Carbon $endRange, int $batchSize = 5000): int
+    {
+        $totalDeleted = 0;
+
+        while (true) {
+            $ids = DB::table($table)
+                ->whereBetween($timeColumn, [$start, $endRange])
+                ->orderBy($idColumn)
+                ->limit($batchSize)
+                ->pluck($idColumn)
+                ->all();
+
+            if (empty($ids)) {
+                break;
+            }
+
+            $deleted = DB::table($table)
+                ->whereIn($idColumn, $ids)
+                ->delete();
+
+            $totalDeleted += $deleted;
+
+            // Safety break (shouldn't happen, but prevents infinite loops)
+            if ($deleted === 0) {
+                break;
+            }
+        }
+
+        return $totalDeleted;
+    }
+
+    /**
      * Ambil daftar tahun yang tersedia berdasarkan data di database.
      * Sumber: aktivitas_sistem(waktu_kejadian), log_aktivitas(waktu_kejadian), notifikasi(waktu_dibuat)
      * SUPER ADMIN ONLY (enforced by route middleware).
@@ -72,42 +181,28 @@ class DataCleanupController extends Controller
      */
     public function cleanupAktivitasSistem(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'bulan' => 'required|integer|min:1|max:12',
-            'tahun' => 'required|integer|min:1970|max:2100',
-        ]);
-
-        if ($validator->fails()) {
+        try {
+            [$mode, $awal, $akhir, $endRange] = $this->resolveRange($request);
+        } catch (\InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validasi gagal',
-                'errors' => $validator->errors(),
+                'errors' => [$e->getMessage()],
             ], 422);
-        }
-
-        $bulan = (int) $request->get('bulan');
-        $tahun = (int) $request->get('tahun');
-
-        // Buat range tanggal untuk bulan spesifik (awal sampai akhir bulan)
-        $awalBulan = Carbon::create($tahun, $bulan, 1)->startOfMonth();
-        $akhirBulan = Carbon::create($tahun, $bulan, 1)->endOfMonth();
-
-        if ($akhirBulan->isFuture()) {
+        } catch (\RuntimeException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Tidak dapat menghapus data masa depan.',
+                'message' => $e->getMessage(),
             ], 400);
         }
 
         try {
-            // Hapus HANYA data pada bulan dan tahun yang dipilih
-            $deleted = DB::table('aktivitas_sistem')
-                ->whereBetween('waktu_kejadian', [$awalBulan, $akhirBulan])
-                ->delete();
+            $deleted = $this->deleteInBatches('aktivitas_sistem', 'waktu_kejadian', 'id_aktivitas', $awal, $endRange);
 
             Log::info('[CLEANUP] Aktivitas Sistem dibersihkan', [
-                'bulan' => $bulan,
-                'tahun' => $tahun,
+                'mode' => $mode,
+                'range_start' => $awal->toDateTimeString(),
+                'range_end' => $endRange->toDateTimeString(),
                 'deleted_count' => $deleted,
                 'user_id' => $request->user()->id_pengguna,
             ]);
@@ -135,41 +230,28 @@ class DataCleanupController extends Controller
      */
     public function cleanupLogAktivitas(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'bulan' => 'required|integer|min:1|max:12',
-            'tahun' => 'required|integer|min:1970|max:2100',
-        ]);
-
-        if ($validator->fails()) {
+        try {
+            [$mode, $awal, $akhir, $endRange] = $this->resolveRange($request);
+        } catch (\InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validasi gagal',
-                'errors' => $validator->errors(),
+                'errors' => [$e->getMessage()],
             ], 422);
-        }
-
-        $bulan = (int) $request->get('bulan');
-        $tahun = (int) $request->get('tahun');
-
-        $awalBulan = Carbon::create($tahun, $bulan, 1)->startOfMonth();
-        $akhirBulan = Carbon::create($tahun, $bulan, 1)->endOfMonth();
-
-        if ($akhirBulan->isFuture()) {
+        } catch (\RuntimeException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Tidak dapat menghapus data masa depan.',
+                'message' => $e->getMessage(),
             ], 400);
         }
 
         try {
-            // Hapus HANYA data pada bulan dan tahun yang dipilih
-            $deleted = DB::table('log_aktivitas')
-                ->whereBetween('waktu_kejadian', [$awalBulan, $akhirBulan])
-                ->delete();
+            $deleted = $this->deleteInBatches('log_aktivitas', 'waktu_kejadian', 'id_log', $awal, $endRange);
 
             Log::info('[CLEANUP] Log Aktivitas dibersihkan', [
-                'bulan' => $bulan,
-                'tahun' => $tahun,
+                'mode' => $mode,
+                'range_start' => $awal->toDateTimeString(),
+                'range_end' => $endRange->toDateTimeString(),
                 'deleted_count' => $deleted,
                 'user_id' => $request->user()->id_pengguna,
             ]);
@@ -197,41 +279,28 @@ class DataCleanupController extends Controller
      */
     public function cleanupNotifikasi(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'bulan' => 'required|integer|min:1|max:12',
-            'tahun' => 'required|integer|min:1970|max:2100',
-        ]);
-
-        if ($validator->fails()) {
+        try {
+            [$mode, $awal, $akhir, $endRange] = $this->resolveRange($request);
+        } catch (\InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validasi gagal',
-                'errors' => $validator->errors(),
+                'errors' => [$e->getMessage()],
             ], 422);
-        }
-
-        $bulan = (int) $request->get('bulan');
-        $tahun = (int) $request->get('tahun');
-
-        $awalBulan = Carbon::create($tahun, $bulan, 1)->startOfMonth();
-        $akhirBulan = Carbon::create($tahun, $bulan, 1)->endOfMonth();
-
-        if ($akhirBulan->isFuture()) {
+        } catch (\RuntimeException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Tidak dapat menghapus data masa depan.',
+                'message' => $e->getMessage(),
             ], 400);
         }
 
         try {
-            // Hapus HANYA data pada bulan dan tahun yang dipilih
-            $deleted = DB::table('notifikasi')
-                ->whereBetween('waktu_dibuat', [$awalBulan, $akhirBulan])
-                ->delete();
+            $deleted = $this->deleteInBatches('notifikasi', 'waktu_dibuat', 'id_notifikasi', $awal, $endRange);
 
             Log::info('[CLEANUP] Notifikasi dibersihkan', [
-                'bulan' => $bulan,
-                'tahun' => $tahun,
+                'mode' => $mode,
+                'range_start' => $awal->toDateTimeString(),
+                'range_end' => $endRange->toDateTimeString(),
                 'deleted_count' => $deleted,
                 'user_id' => $request->user()->id_pengguna,
             ]);
@@ -258,38 +327,33 @@ class DataCleanupController extends Controller
      */
     public function getCleanupStats(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'bulan' => 'required|integer|min:1|max:12',
-            'tahun' => 'required|integer|min:1970|max:2100',
-        ]);
-
-        if ($validator->fails()) {
+        try {
+            [$mode, $awal, $akhir, $endRange] = $this->resolveRange($request);
+        } catch (\InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validasi gagal',
-                'errors' => $validator->errors(),
+                'errors' => [$e->getMessage()],
             ], 422);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
         }
 
-        $bulan = (int) $request->get('bulan');
-        $tahun = (int) $request->get('tahun');
-
-        // Buat range tanggal untuk bulan spesifik
-        $awalBulan = Carbon::create($tahun, $bulan, 1)->startOfMonth();
-        $akhirBulan = Carbon::create($tahun, $bulan, 1)->endOfMonth();
-
         try {
-            // Hitung HANYA data pada bulan dan tahun yang dipilih
+            // Hitung data pada range yang dipilih
             $countAktivitas = DB::table('aktivitas_sistem')
-                ->whereBetween('waktu_kejadian', [$awalBulan, $akhirBulan])
+                ->whereBetween('waktu_kejadian', [$awal, $endRange])
                 ->count();
 
             $countLogAktivitas = DB::table('log_aktivitas')
-                ->whereBetween('waktu_kejadian', [$awalBulan, $akhirBulan])
+                ->whereBetween('waktu_kejadian', [$awal, $endRange])
                 ->count();
 
             $countNotifikasi = DB::table('notifikasi')
-                ->whereBetween('waktu_dibuat', [$awalBulan, $akhirBulan])
+                ->whereBetween('waktu_dibuat', [$awal, $endRange])
                 ->count();
 
             return response()->json([
@@ -299,10 +363,11 @@ class DataCleanupController extends Controller
                     'log_aktivitas' => $countLogAktivitas,
                     'notifikasi' => $countNotifikasi,
                     'total' => $countAktivitas + $countLogAktivitas + $countNotifikasi,
-                    'month' => $bulan,
-                    'year' => $tahun,
-                    'cutoff_date' => $akhirBulan->toDateString(),
-                    'date_range' => $awalBulan->format('Y-m-d') . ' s/d ' . $akhirBulan->format('Y-m-d'),
+                    'mode' => $mode,
+                    'cutoff_date' => $endRange->toDateString(),
+                    'date_range' => $awal->format('Y-m-d') . ' s/d ' . $endRange->format('Y-m-d'),
+                    'range_start' => $awal->toDateString(),
+                    'range_end' => $endRange->toDateString(),
                 ],
             ]);
         } catch (\Exception $e) {
@@ -318,55 +383,36 @@ class DataCleanupController extends Controller
      */
     public function cleanupAll(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'bulan' => 'required|integer|min:1|max:12',
-            'tahun' => 'required|integer|min:1970|max:2100',
-        ]);
-
-        if ($validator->fails()) {
+        try {
+            [$mode, $awal, $akhir, $endRange] = $this->resolveRange($request);
+        } catch (\InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validasi gagal',
-                'errors' => $validator->errors(),
+                'errors' => [$e->getMessage()],
             ], 422);
-        }
-
-        $bulan = (int) $request->get('bulan');
-        $tahun = (int) $request->get('tahun');
-
-        $awalBulan = Carbon::create($tahun, $bulan, 1)->startOfMonth();
-        $akhirBulan = Carbon::create($tahun, $bulan, 1)->endOfMonth();
-
-        if ($akhirBulan->isFuture()) {
+        } catch (\RuntimeException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Tidak dapat menghapus data masa depan.',
+                'message' => $e->getMessage(),
             ], 400);
         }
 
         DB::beginTransaction();
 
         try {
-            // Hapus HANYA data pada bulan dan tahun yang dipilih
-            $deletedAktivitas = DB::table('aktivitas_sistem')
-                ->whereBetween('waktu_kejadian', [$awalBulan, $akhirBulan])
-                ->delete();
-
-            $deletedLog = DB::table('log_aktivitas')
-                ->whereBetween('waktu_kejadian', [$awalBulan, $akhirBulan])
-                ->delete();
-
-            $deletedNotif = DB::table('notifikasi')
-                ->whereBetween('waktu_dibuat', [$awalBulan, $akhirBulan])
-                ->delete();
+            $deletedAktivitas = $this->deleteInBatches('aktivitas_sistem', 'waktu_kejadian', 'id_aktivitas', $awal, $endRange);
+            $deletedLog = $this->deleteInBatches('log_aktivitas', 'waktu_kejadian', 'id_log', $awal, $endRange);
+            $deletedNotif = $this->deleteInBatches('notifikasi', 'waktu_dibuat', 'id_notifikasi', $awal, $endRange);
 
             DB::commit();
 
             $total = $deletedAktivitas + $deletedLog + $deletedNotif;
 
             Log::info('[CLEANUP] Cleanup semua data berhasil', [
-                'bulan' => $bulan,
-                'tahun' => $tahun,
+                'mode' => $mode,
+                'range_start' => $awal->toDateTimeString(),
+                'range_end' => $endRange->toDateTimeString(),
                 'aktivitas_sistem' => $deletedAktivitas,
                 'log_aktivitas' => $deletedLog,
                 'notifikasi' => $deletedNotif,

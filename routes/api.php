@@ -6,10 +6,12 @@ use App\Http\Controllers\PenagihanController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\UserManagementController;
+use App\Http\Controllers\MitraController;
 use App\Http\Controllers\AktivitasController;
 use App\Http\Controllers\NotifikasiController;
 use App\Http\Controllers\LogAktivitasController;
 use App\Http\Controllers\DataCleanupController;
+use App\Http\Controllers\PenagihanFilterOptionsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,8 +27,9 @@ use App\Http\Controllers\DataCleanupController;
 // ========================================
 // [\ud83d\udd10 AUTH_SYSTEM] PUBLIC ROUTES (No Authentication)
 // ========================================
-Route::post('/login', [AuthController::class, 'login']);
-Route::get('/super-admin-contact', [ProfileController::class, 'superAdminContact']);
+// Throttle untuk mengurangi brute force / abuse
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+Route::get('/super-admin-contact', [ProfileController::class, 'superAdminContact'])->middleware('throttle:30,1');
 
 // ========================================
 // [\ud83d\udd10 AUTH_SYSTEM] PROTECTED ROUTES (Authentication Required)
@@ -67,10 +70,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::prefix('users')->group(function () {
             Route::get('/', [UserManagementController::class, 'index']);
             Route::put('/{id}', [UserManagementController::class, 'update']);
+            Route::put('/{id}/active', [UserManagementController::class, 'setActive']);
             Route::put('/{id}/reset-password', [UserManagementController::class, 'resetUserPassword']);
             Route::put('/{id}/role', [UserManagementController::class, 'updateRole']);
             Route::delete('/{id}', [UserManagementController::class, 'destroy']);
         });
+    });
+
+    // Dropdown mitra dinamis untuk filter & user setup (super_admin & admin)
+    Route::middleware('role:super_admin,admin')->group(function () {
+        Route::get('/mitra-options', [MitraController::class, 'options']);
     });
 
     // ========================================
@@ -95,17 +104,26 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // 3️⃣ Import route (super_admin & admin)
         Route::middleware('role:super_admin,admin')->group(function () {
-            Route::post('/import', [PenagihanController::class, 'import']);
+            Route::post('/import', [PenagihanController::class, 'import'])->middleware('throttle:5,1');
         });
 
-        // 4️⃣ Bulk Delete - Hapus semua data (super_admin ONLY)
-        Route::middleware('role:super_admin')->group(function () {
-            Route::delete('/delete-all', [PenagihanController::class, 'destroyAll']);
-            Route::delete('/delete-selected', [PenagihanController::class, 'destroySelected']);
+        // 4️⃣ Bulk Delete - Hapus semua data (super_admin & admin)
+        Route::middleware('role:super_admin,admin')->group(function () {
+            Route::delete('/delete-all', [PenagihanController::class, 'destroyAll'])->middleware('throttle:5,1');
+            Route::delete('/delete-selected', [PenagihanController::class, 'destroySelected'])->middleware('throttle:10,1');
+            Route::put('/prioritize-selected', [PenagihanController::class, 'setPrioritizeSelected'])->middleware('throttle:10,1');
         });
 
-        // Read access (semua user yang login bisa lihat)
-        Route::get('/', [PenagihanController::class, 'index']);
+        // 4.5️⃣ Filter options (Mitra/Jenis PO/Phase) - admin/super_admin only
+        Route::middleware('role:super_admin,admin')->group(function () {
+            Route::get('/filter-options', [PenagihanFilterOptionsController::class, 'options']);
+        });
+
+        // Read access (hanya role yang dikenali)
+        Route::middleware('role:super_admin,admin,viewer')->group(function () {
+            Route::get('/', [PenagihanController::class, 'index']);
+            Route::get('/{id}', [PenagihanController::class, 'show']);
+        });
 
         // Write access (hanya super_admin & admin)
         Route::middleware('role:super_admin,admin')->group(function () {
@@ -115,7 +133,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::put('/{id}/prioritize', [PenagihanController::class, 'setPrioritize']);
         });
 
-        Route::get('/{id}', [PenagihanController::class, 'show']);
+        // NOTE: wildcard {id} sudah dipindah ke group read-only di atas.
     });
 
     // ========================================

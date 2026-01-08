@@ -9,7 +9,9 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Validation\Rule;
 use App\Traits\LogsActivity;
 
 class UserManagementController extends Controller
@@ -43,6 +45,7 @@ class UserManagementController extends Controller
                 'phone' => $user->nomor_hp ?? '', // Match frontend field name
                 'photo' => $photoUrl,
                 'role' => $user->peran,
+                'active' => (bool) ($user->aktif ?? true),
                 'created_at' => $user->dibuat_pada ? $user->dibuat_pada->format('Y-m-d\TH:i:s.u\Z') : null,
             ];
             
@@ -129,6 +132,32 @@ class UserManagementController extends Controller
                 'unique:pengguna,username,' . $userId . ',id_pengguna',
             ],
             'email' => 'sometimes|required|email|unique:pengguna,email,' . $userId . ',id_pengguna',
+            // Frontend menggunakan field 'keterangan' untuk jobdesk
+            'keterangan' => 'sometimes|nullable|string|max:500',
+            // Mitra optional untuk user viewer/admin (dipakai untuk akun mitra: viewer + field mitra)
+            'mitra' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:255',
+                function ($attribute, $value, $fail) {
+                    if ($value === null) return;
+                    $mitra = trim((string) $value);
+                    if ($mitra === '') return;
+
+                    if (preg_match('/telkom\s*akses/i', $mitra) === 1) return;
+
+                    $exists = DB::table('data_proyek')
+                        ->whereNotNull('nama_mitra')
+                        ->whereRaw("TRIM(nama_mitra) != ''")
+                        ->where('nama_mitra', $mitra)
+                        ->exists();
+
+                    if (!$exists) {
+                        $fail('Nama Mitra tidak valid.');
+                    }
+                },
+            ],
         ]);
 
         if ($validator->fails()) {
@@ -161,11 +190,22 @@ class UserManagementController extends Controller
             $updateData['email'] = $request->email;
         }
 
+        if ($request->has('keterangan')) {
+            $updateData['jobdesk'] = $request->keterangan;
+        }
+
+        if ($request->has('mitra')) {
+            $mitra = $request->mitra;
+            $updateData['mitra'] = is_string($mitra) ? trim($mitra) : null;
+        }
+
         // Store old data for audit
         $dataSebelum = [
             'nama' => $user->nama,
             'username' => $user->username,
             'email' => $user->email,
+            'jobdesk' => $user->jobdesk,
+            'mitra' => $user->mitra,
         ];
         
         $user->update($updateData);
@@ -175,6 +215,8 @@ class UserManagementController extends Controller
             'nama' => $user->nama,
             'username' => $user->username,
             'email' => $user->email,
+            'jobdesk' => $user->jobdesk,
+            'mitra' => $user->mitra,
         ];
 
         // Log activity
@@ -198,6 +240,82 @@ class UserManagementController extends Controller
                 'username' => $user->username ?? $user->email,
                 'email' => $user->email,
                 'role' => $user->peran,
+                'jobdesk' => $user->jobdesk,
+                'mitra' => $user->mitra,
+            ]
+        ]);
+    }
+
+    /**
+     * [👥 USER_MANAGEMENT] Aktifkan / Nonaktifkan akun user (Super Admin only)
+     * - Tidak boleh untuk role super_admin
+     * - Jika dinonaktifkan: revoke semua token Sanctum
+     */
+    public function setActive(Request $request, $userId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'active' => 'required|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $user = User::find($userId);
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User tidak ditemukan'
+            ], 404);
+        }
+
+        if (($user->peran ?? '') === 'super_admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akun Super Admin tidak dapat dinonaktifkan.'
+            ], 403);
+        }
+
+        $active = (bool) $request->boolean('active');
+
+        $dataSebelum = [
+            'aktif' => (bool) ($user->aktif ?? true),
+        ];
+
+        $user->update([
+            'aktif' => $active,
+        ]);
+
+        if ($active === false) {
+            // Revoke semua token agar user langsung logout
+            $user->tokens()->delete();
+        }
+
+        $dataSesudah = [
+            'aktif' => (bool) ($user->aktif ?? true),
+        ];
+
+        $this->logActivity(
+            $request,
+            $active ? 'Aktifkan Akun User' : 'Nonaktifkan Akun User',
+            'edit',
+            ($active ? 'Mengaktifkan' : 'Menonaktifkan') . " akun user: {$user->nama}",
+            'pengguna',
+            $user->id,
+            $dataSebelum,
+            $dataSesudah
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $active ? 'Akun berhasil diaktifkan' : 'Akun berhasil dinonaktifkan',
+            'data' => [
+                'id' => $user->id_pengguna,
+                'active' => (bool) ($user->aktif ?? true),
             ]
         ]);
     }
@@ -210,6 +328,28 @@ class UserManagementController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'role' => 'required|in:super_admin,admin,viewer',
+            'mitra' => [
+                'nullable',
+                'string',
+                'max:255',
+                function ($attribute, $value, $fail) {
+                    if ($value === null) return;
+                    $mitra = trim((string) $value);
+                    if ($mitra === '') return;
+
+                    if (preg_match('/telkom\s*akses/i', $mitra) === 1) return;
+
+                    $exists = DB::table('data_proyek')
+                        ->whereNotNull('nama_mitra')
+                        ->whereRaw("TRIM(nama_mitra) != ''")
+                        ->where('nama_mitra', $mitra)
+                        ->exists();
+
+                    if (!$exists) {
+                        $fail('Nama Mitra tidak valid.');
+                    }
+                },
+            ],
         ]);
 
         if ($validator->fails()) {
@@ -230,8 +370,14 @@ class UserManagementController extends Controller
         }
 
         $roleSebelum = $user->peran;
-        
-        $user->update(['peran' => $request->role]);
+
+        $updateData = ['peran' => $request->role];
+        // Update mitra hanya jika dikirim (akun mitra sekarang: role=viewer + field mitra)
+        if ($request->has('mitra')) {
+            $updateData['mitra'] = $request->mitra === null ? null : trim((string) $request->mitra);
+        }
+
+        $user->update($updateData);
 
         // Log activity
         $this->logActivity(
@@ -253,6 +399,7 @@ class UserManagementController extends Controller
                 'nama' => $user->nama,
                 'email' => $user->email,
                 'peran' => $user->peran,
+                'mitra' => $user->mitra,
             ]
         ]);
     }

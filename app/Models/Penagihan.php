@@ -7,6 +7,8 @@ use App\Enums\ProjectPrioritySource;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 
 class Penagihan extends Model
 {
@@ -42,6 +44,36 @@ class Penagihan extends Model
     protected static function boot()
     {
         parent::boot();
+
+        // [🔐 MITRA_ACCESS] Enforce data isolation untuk akun mitra.
+        // Policy:
+        // - Role "mitra" tidak digunakan lagi.
+        // - Akun mitra menggunakan role=viewer + field pengguna.mitra terisi.
+        // - Jika pengguna.mitra = "Telkom Akses" maka boleh akses semua data.
+        // Filtering dilakukan di backend dan tidak bergantung pada request parameter.
+        static::addGlobalScope('mitra_access', function (Builder $builder) {
+            if (!Auth::check()) {
+                return;
+            }
+
+            $user = Auth::user();
+            $userRole = $user->role ?? $user->peran;
+
+            // Hanya viewer yang perlu dibatasi berdasarkan mapping mitra.
+            if ($userRole !== 'viewer') {
+                return;
+            }
+
+            $mitra = is_string($user->mitra ?? null) ? trim((string) $user->mitra) : '';
+            if ($mitra === '') return;
+
+            // Special-case: Telkom Akses boleh akses semua mitra.
+            // Accept variants like "PT Telkom Akses" / "PT. Telkom Akses".
+            if (preg_match('/telkom\s*akses/i', $mitra) === 1) return;
+
+            // Map user.mitra ke kolom data_proyek.nama_mitra
+            $builder->where('nama_mitra', $mitra);
+        });
         
         // Clear cache saat data berubah
         static::saved(function () {

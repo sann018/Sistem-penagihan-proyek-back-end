@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Imports\InvoicesImport;
 use App\Exports\InvoicesExport;
@@ -20,6 +21,14 @@ use App\Traits\LogsActivity;
 class PenagihanController extends Controller
 {
     use LogsActivity;
+
+    private const FINAL_PROCUREMENT_STATUSES = ['sekuler ttd', 'scan dokumen mitra', 'otw reg'];
+
+    private function isFinalProcurementStatus(?string $status): bool
+    {
+        $normalized = strtolower(trim((string) ($status ?? '')));
+        return in_array($normalized, self::FINAL_PROCUREMENT_STATUSES, true);
+    }
     /**
      * [📊 PROJECT_MANAGEMENT] Tampilkan list semua project penagihan
      * Mendukung search, filter status, card filter, sorting, dan PRIORITAS
@@ -32,10 +41,50 @@ class PenagihanController extends Controller
     {
         $query = Penagihan::query();
 
+        // Optional filters for admin/super_admin (viewer restrictions enforced by global scope)
+        $user = $request->user();
+        $userRole = $user?->role ?? $user?->peran;
+
+        // Filter by mitra (admin/super_admin only)
+        if (in_array($userRole, ['super_admin', 'admin'], true) && $request->filled('mitra')) {
+            $mitra = trim((string) $request->get('mitra'));
+            if ($mitra !== '' && $mitra !== 'all') {
+                $query->where('nama_mitra', $mitra);
+            }
+        }
+
+        // Filter by jenis_po (admin/super_admin only)
+        if (in_array($userRole, ['super_admin', 'admin'], true) && $request->filled('jenis_po')) {
+            $jenisPo = trim((string) $request->get('jenis_po'));
+            if ($jenisPo !== '' && $jenisPo !== 'all') {
+                $query->where('jenis_po', $jenisPo);
+            }
+        }
+
+        // Filter by phase (admin/super_admin only)
+        if (in_array($userRole, ['super_admin', 'admin'], true) && $request->filled('phase')) {
+            $phase = trim((string) $request->get('phase'));
+            if ($phase !== '' && $phase !== 'all') {
+                $query->where('phase', $phase);
+            }
+        }
+
+        // Filter by tahun based on PID prefix (e.g., 25xxxx => 2025)
+        if ($request->filled('tahun')) {
+            $tahun = (int) $request->get('tahun');
+            $yy = str_pad((string) ($tahun % 100), 2, '0', STR_PAD_LEFT);
+            $query->where('pid', 'like', $yy . '%');
+        }
+
         // FITUR BARU: Filter untuk dashboard (hanya prioritas)
         if ($request->boolean('dashboard')) {
             // Dashboard menggunakan prioritas legacy (1/2/3) yang di-set oleh user
             $query->whereIn('prioritas', [1, 2, 3])
+                // Jangan tampilkan proyek yang sudah masuk tahap procurement final
+                ->where(function ($q) {
+                    $q->whereNull('status_procurement')
+                        ->orWhereRaw('LOWER(status_procurement) NOT IN (?, ?, ?)', self::FINAL_PROCUREMENT_STATUSES);
+                })
                 ->orderBy('prioritas', 'asc')
                 ->orderBy('prioritas_updated_at', 'desc')
                 ->orderBy('dibuat_pada', 'desc')
@@ -100,9 +149,46 @@ class PenagihanController extends Controller
 
         // ✅ OPTIMASI: Sorting dengan ORDER BY konsisten untuk pagination
         if (!$request->boolean('dashboard')) {
-            $sortBy = $request->get('sort_by', 'prioritas');
-            $sortOrder = $request->get('sort_order', 'desc');
-            
+            // 🔒 SECURITY: sort_by dan sort_order WAJIB di-whitelist untuk mencegah SQL injection.
+            // Hanya izinkan kolom yang memang ada dan aman untuk di-order.
+            $allowedSortBy = [
+                'prioritas',
+                'prioritas_updated_at',
+                'dibuat_pada',
+                'diperbarui_pada',
+                'pid',
+                'nama_proyek',
+                'nama_mitra',
+                'jenis_po',
+                'nomor_po',
+                'phase',
+                'status_ct',
+                'status_ut',
+                'rekap_boq',
+                'rekon_nilai',
+                'rekon_material',
+                'pelurusan_material',
+                'status_procurement',
+                'priority_level',
+                'priority_source',
+                'priority_score',
+                'estimasi_durasi_hari',
+                'tanggal_mulai',
+                'status',
+                'tanggal_invoice',
+                'tanggal_jatuh_tempo',
+            ];
+
+            $sortBy = (string) $request->get('sort_by', 'prioritas');
+            if (!in_array($sortBy, $allowedSortBy, true)) {
+                $sortBy = 'prioritas';
+            }
+
+            $sortOrder = strtolower((string) $request->get('sort_order', 'desc'));
+            if (!in_array($sortOrder, ['asc', 'desc'], true)) {
+                $sortOrder = 'desc';
+            }
+
             // Primary sort
             $query->orderBy($sortBy, $sortOrder);
             
@@ -116,7 +202,14 @@ class PenagihanController extends Controller
         }
 
         // Pagination
-        $perPage = $request->get('per_page', 15);
+        $perPage = (int) $request->get('per_page', 15);
+        // Hard cap untuk mencegah query berat/abuse
+        if ($perPage < 1) {
+            $perPage = 15;
+        }
+        if ($perPage > 100) {
+            $perPage = 100;
+        }
         $penagihan = $query->paginate($perPage);
 
         // Add timer info dan prioritas info untuk setiap project
@@ -256,7 +349,8 @@ class PenagihanController extends Controller
             'nama_mitra' => 'required|string|max:255',
             'pid' => 'required|string|unique:data_proyek,pid',
             'jenis_po' => 'nullable|string|max:255',
-            'nomor_po' => 'nullable|string|max:255|unique:data_proyek,nomor_po',
+            // nomor_po is allowed to be duplicated (policy change)
+            'nomor_po' => 'nullable|string|max:255',
             'phase' => 'required|string|max:255',
             'rekon_nilai' => 'required|numeric|min:0',
             'status_ct' => 'nullable|string|max:255',
@@ -280,8 +374,8 @@ class PenagihanController extends Controller
             ], 422);
         }
 
-        // Prepare data
-        $data = $payload;
+        // Prepare data (gunakan data tervalidasi untuk mencegah mass assignment)
+        $data = $validator->validated();
         
         // Auto-set timer ke 30 hari jika tidak ada input
         if (empty($data['estimasi_durasi_hari'])) {
@@ -338,7 +432,11 @@ class PenagihanController extends Controller
      */
     public function update(Request $request, string $id): JsonResponse
     {
-        $penagihan = Penagihan::find($id);
+        // Route parameter uses PID (string). Keep a fallback for legacy numeric IDs.
+        $penagihan = Penagihan::where('pid', $id)->first();
+        if (!$penagihan) {
+            $penagihan = Penagihan::find($id);
+        }
 
         if (!$penagihan) {
             return response()->json([
@@ -355,12 +453,16 @@ class PenagihanController extends Controller
             }
         }
 
+        // Pastikan nilai yang sudah dinormalisasi dipakai oleh request (untuk business rule di bawah)
+        $request->merge($payload);
+
         $validator = Validator::make($payload, [
             'nama_proyek' => 'sometimes|required|string|max:255',
             'nama_mitra' => 'sometimes|required|string|max:255',
             'pid' => 'sometimes|required|string|unique:data_proyek,pid,' . $id . ',pid',
             'jenis_po' => 'nullable|string|max:255',
-            'nomor_po' => 'sometimes|nullable|string|max:255|unique:data_proyek,nomor_po,' . $id . ',pid',
+            // nomor_po is allowed to be duplicated (policy change)
+            'nomor_po' => 'sometimes|nullable|string|max:255',
             'phase' => 'sometimes|required|string|max:255',
             'rekon_nilai' => 'sometimes|required|numeric|min:0',
             'status_ct' => 'nullable|string|max:255',
@@ -395,7 +497,7 @@ class PenagihanController extends Controller
         // Pelurusan Material.
         // =====================================================
         $currentProcurement = strtolower(trim((string) ($penagihan->status_procurement ?? '')));
-        $advancedProcurements = ['sekuler ttd', 'scan dokumen mitra', 'otw reg'];
+        $advancedProcurements = self::FINAL_PROCUREMENT_STATUSES;
 
         $wasPrerequisitesDone = (
             strtolower(trim((string) ($penagihan->status_ct ?? ''))) === 'sudah ct' &&
@@ -485,8 +587,24 @@ class PenagihanController extends Controller
 
         // Store old data for audit
         $dataSebelum = $this->sanitizeDataForLog($penagihan->toArray());
-        
-        $penagihan->update($request->all());
+
+        // Gunakan data tervalidasi untuk mencegah mass assignment.
+        $updateData = $validator->validated();
+        // Jika status_procurement di-merge oleh business rule (auto Revisi Mitra), pastikan ikut tersimpan.
+        if ($request->has('status_procurement')) {
+            $updateData['status_procurement'] = $request->input('status_procurement');
+        }
+
+        $penagihan->update($updateData);
+
+        // Jika proyek sudah masuk tahap procurement final, otomatis batalkan prioritas.
+        if ($request->has('status_procurement') && $this->isFinalProcurementStatus($request->input('status_procurement'))) {
+            if (!is_null($penagihan->prioritas)) {
+                $penagihan->prioritas = null;
+                $penagihan->prioritas_updated_at = now();
+                $penagihan->save();
+            }
+        }
         
         // Store new data for audit
         $dataSesudah = $this->sanitizeDataForLog($penagihan->fresh()->toArray());
@@ -652,6 +770,15 @@ class PenagihanController extends Controller
 
         $oldPrioritas = $penagihan->prioritas;
         $newPrioritas = $request->prioritas;
+
+        // Tidak boleh set prioritas jika status procurement sudah final.
+        // Namun, hapus prioritas (null) tetap diperbolehkan.
+        if (!is_null($newPrioritas) && $this->isFinalProcurementStatus($penagihan->status_procurement)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tidak bisa set prioritas karena status procurement proyek sudah tahap final (Sekuler TTD / Scan Dokumen Mitra / OTW Reg).',
+            ], 422);
+        }
         
         // Update prioritas
         $penagihan->prioritas = $newPrioritas;
@@ -694,6 +821,127 @@ class PenagihanController extends Controller
             'success' => true,
             'message' => $message,
             'data' => $this->addTimerInfo($freshData)
+        ]);
+    }
+
+    /**
+     * Set/unset prioritas untuk banyak proyek sekaligus (bulk)
+     * - pids: array PID
+     * - prioritas: 1/2/3 atau null untuk hapus prioritas
+     */
+    public function setPrioritizeSelected(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'pids' => 'required|array|min:1',
+            'pids.*' => 'required|string',
+            'prioritas' => 'nullable|integer|in:1,2,3',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $rawPids = (array) $request->input('pids', []);
+        $pids = collect($rawPids)
+            ->map(fn ($pid) => trim((string) $pid))
+            ->filter(fn ($pid) => $pid !== '' && $pid !== '-')
+            ->unique()
+            ->values()
+            ->all();
+
+        if (count($pids) === 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tidak ada data valid yang dipilih',
+            ], 422);
+        }
+
+        $newPrioritas = $request->input('prioritas');
+
+        $projects = Penagihan::query()
+            ->whereIn('pid', $pids)
+            ->get();
+
+        $foundPids = $projects->pluck('pid')->all();
+        $missing = array_values(array_diff($pids, $foundPids));
+        if (count($missing) > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sebagian proyek tidak ditemukan',
+                'missing_pids' => $missing,
+            ], 404);
+        }
+
+        // Jika set prioritas (bukan null), tolak jika ada proyek yang sudah final procurement.
+        if (!is_null($newPrioritas)) {
+            $finalProjects = $projects
+                ->filter(fn ($p) => $this->isFinalProcurementStatus($p->status_procurement))
+                ->pluck('pid')
+                ->values()
+                ->all();
+
+            if (count($finalProjects) > 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tidak bisa set prioritas: ada proyek yang status procurement sudah final (Sekuler TTD / Scan Dokumen Mitra / OTW Reg).',
+                    'final_procurement_pids' => $finalProjects,
+                ], 422);
+            }
+        }
+
+        $now = now();
+        $updated = 0;
+
+        DB::transaction(function () use ($request, $projects, $newPrioritas, $now, &$updated) {
+            foreach ($projects as $project) {
+                $oldPrioritas = $project->prioritas;
+
+                $project->prioritas = $newPrioritas;
+                $project->prioritas_updated_at = $now;
+                $project->save();
+
+                $updated++;
+
+                if ($newPrioritas === null) {
+                    $this->logActivity(
+                        $request,
+                        'Hapus Prioritas',
+                        'update',
+                        "Menghapus prioritas proyek '{$project->nama_proyek}' (bulk)",
+                        'penagihan',
+                        $project->pid,
+                        ['prioritas' => $oldPrioritas],
+                        ['prioritas' => null]
+                    );
+                } else {
+                    $this->logActivity(
+                        $request,
+                        "Set Prioritas {$newPrioritas}",
+                        'update',
+                        "Mengubah prioritas proyek '{$project->nama_proyek}' menjadi Prioritas {$newPrioritas} (bulk)",
+                        'penagihan',
+                        $project->pid,
+                        ['prioritas' => $oldPrioritas],
+                        ['prioritas' => (int) $newPrioritas]
+                    );
+                }
+            }
+        });
+
+        $message = $newPrioritas === null
+            ? "Berhasil menghapus prioritas untuk {$updated} proyek"
+            : "Berhasil set Prioritas {$newPrioritas} untuk {$updated} proyek";
+
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'data' => [
+                'total_updated' => $updated,
+            ],
         ]);
     }
 

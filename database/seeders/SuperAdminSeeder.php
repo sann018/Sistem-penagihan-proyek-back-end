@@ -18,8 +18,10 @@ class SuperAdminSeeder extends Seeder
             ['email' => 'admin@telkom.co.id'],
             [
                 'nama' => 'Super Admin',
-                'kata_sandi' => Hash::make('telkomakses25'), 
+                'username' => 'admin01',
+                'kata_sandi' => Hash::make('@Admintelkom25'), 
                 'peran' => 'super_admin',
+                'email_terverifikasi_pada' => now(),
             ]
         );
 
@@ -28,8 +30,10 @@ class SuperAdminSeeder extends Seeder
             ['email' => 'viewer@telkom.co.id'],
             [
                 'nama' => 'Admin Viewer',
+                'username' => 'viewer01',
                 'kata_sandi' => Hash::make('viewer123'),
                 'peran' => 'viewer',
+                'email_terverifikasi_pada' => now(),
             ]
         );
 
@@ -38,8 +42,11 @@ class SuperAdminSeeder extends Seeder
             ['email' => 'readonly@telkom.co.id'],
             [
                 'nama' => 'User Read Only',
+                'username' => 'readonly01',
                 'kata_sandi' => Hash::make('readonly123'),
-                'peran' => 'read_only',
+                // Role legacy "read_only" tidak digunakan. Gunakan viewer (read-only akses).
+                'peran' => 'viewer',
+                'email_terverifikasi_pada' => now(),
             ]
         );
 
@@ -47,7 +54,8 @@ class SuperAdminSeeder extends Seeder
         $this->command->info('');
         $this->command->info('Super Admin:');
         $this->command->info('  Email: admin@telkom.co.id');
-        $this->command->info('  Password: telkomakses25');
+        $this->command->info('  Username: admin01');
+        $this->command->info('  Password: @Admintelkom25');
         $this->command->info('');
         $this->command->info('Admin/Viewer (CRUD Proyek):');
         $this->command->info('  Email: viewer@telkom.co.id');

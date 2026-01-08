@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
 use App\Models\User;
 use App\Traits\LogsActivity;
 use Illuminate\Validation\Rules\Password;
@@ -98,7 +99,7 @@ class ProfileController extends Controller
         // Viewer hanya boleh edit field terbatas
         $allowedFields = $isAdmin
             ? ['name', 'username', 'email', 'jobdesk', 'mitra', 'nomor_hp']
-            : ['name', 'jobdesk', 'mitra', 'nomor_hp'];
+            : ['name', 'jobdesk', 'nomor_hp'];
 
         $requestKeys = array_keys($request->all());
         $forbiddenKeys = array_values(array_diff($requestKeys, $allowedFields));
@@ -128,7 +129,31 @@ class ProfileController extends Controller
                 ? ('sometimes|required|email|unique:pengguna,email,' . $userKey . ',id_pengguna')
                 : 'prohibited',
             'jobdesk' => 'sometimes|nullable|string|max:255',
-            'mitra' => 'sometimes|nullable|string|max:255',
+            // Mitra hanya boleh diubah oleh admin/super_admin.
+            'mitra' => $isAdmin
+                ? [
+                    'sometimes',
+                    'nullable',
+                    'string',
+                    'max:255',
+                    function ($attribute, $value, $fail) {
+                        $mitra = trim((string) $value);
+                        if ($mitra === '') return;
+
+                        // Special-case: Telkom Akses (accept variants like "PT Telkom Akses")
+                        if (preg_match('/telkom\s*akses/i', $mitra) === 1) return;
+
+                        $exists = DB::table('data_proyek')
+                            ->whereNotNull('nama_mitra')
+                            ->where('nama_mitra', $mitra)
+                            ->exists();
+
+                        if (!$exists) {
+                            $fail('Nama Mitra tidak valid.');
+                        }
+                    },
+                ]
+                : 'prohibited',
             'nomor_hp' => 'sometimes|nullable|string|max:20',
         ]);
 
@@ -164,7 +189,7 @@ class ProfileController extends Controller
         if ($request->has('jobdesk')) {
             $updateData['jobdesk'] = $request->jobdesk;
         }
-        if ($request->has('mitra')) {
+        if ($isAdmin && $request->has('mitra')) {
             $updateData['mitra'] = $request->mitra;
         }
         if ($request->has('nomor_hp')) {

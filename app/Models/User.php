@@ -43,6 +43,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'nomor_hp',
         'kata_sandi',
         'peran',
+        'aktif',
         'foto',
         'terakhir_login_pada',
         'email_terverifikasi_pada',
@@ -69,6 +70,7 @@ class User extends Authenticatable implements MustVerifyEmail
             'email_terverifikasi_pada' => 'datetime',
             'kata_sandi' => 'hashed',
             'terakhir_login_pada' => 'datetime',
+            'aktif' => 'boolean',
         ];
     }
 
