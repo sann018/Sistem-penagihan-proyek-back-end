@@ -28,8 +28,11 @@ class PenagihanFilterOptionsController extends Controller
             ->filter(fn ($v) => is_string($v) && $v !== '')
             ->values();
 
-        // Pastikan opsi "Telkom Akses" tersedia (untuk akses semua mitra pada akun viewer tertentu)
-        if (!$mitra->contains(fn ($m) => is_string($m) && strcasecmp(trim($m), self::SPECIAL_ALL_ACCESS_MITRA) === 0)) {
+        // Jika tidak ada data mitra dari proyek, jangan munculkan opsi apa pun.
+        // Opsi spesial hanya ditambahkan jika memang ada data mitra.
+        if ($mitra->isNotEmpty()
+            && !$mitra->contains(fn ($m) => is_string($m) && strcasecmp(trim($m), self::SPECIAL_ALL_ACCESS_MITRA) === 0)
+        ) {
             $mitra = collect([self::SPECIAL_ALL_ACCESS_MITRA])->merge($mitra)->values();
         }
 

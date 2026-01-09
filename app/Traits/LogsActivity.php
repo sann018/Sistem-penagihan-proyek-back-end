@@ -202,6 +202,7 @@ trait LogsActivity
                 'edit', 'update' => 'ubah_proyek',
                 'delete' => 'hapus_proyek',
                 'import' => 'import_excel',
+                'bulk_delete', 'bulk_delete_selected' => 'bulk_delete',
                 default => 'ubah_proyek',
             };
         }

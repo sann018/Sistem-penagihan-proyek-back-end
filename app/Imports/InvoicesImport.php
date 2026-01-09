@@ -35,6 +35,12 @@ class InvoicesImport implements
     private bool $hasValidData = false;
     private array $headerMapping = [];
     private array $invalidHeaders = [];
+    private array $importedProjects = [];
+
+    public function getImportedProjects(): array
+    {
+        return $this->importedProjects;
+    }
 
     /**
      * Get header mapping untuk flexible column names
@@ -401,6 +407,10 @@ class InvoicesImport implements
             ]);
             
             $this->successCount++;
+            $this->importedProjects[] = [
+                'pid' => $pid,
+                'nama_proyek' => $penagihan->nama_proyek,
+            ];
             Log::info("Row {$this->rowCount} berhasil diproses: {$penagihan->nama_proyek}");
             return $penagihan;
         } catch (\Exception $e) {

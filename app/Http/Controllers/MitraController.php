@@ -25,8 +25,11 @@ class MitraController extends Controller
             ->pluck('nama_mitra')
             ->values();
 
-        // Pastikan opsi "Telkom Akses" tersedia (untuk akses semua mitra pada akun viewer tertentu)
-        if (!$mitra->contains(fn ($m) => is_string($m) && strcasecmp(trim($m), self::SPECIAL_ALL_ACCESS_MITRA) === 0)) {
+        // Catatan: Jika tabel proyek kosong / semua nama_mitra kosong, dropdown harus kosong.
+        // Opsi spesial hanya ditambahkan jika memang ada data mitra dari proyek.
+        if ($mitra->isNotEmpty()
+            && !$mitra->contains(fn ($m) => is_string($m) && strcasecmp(trim($m), self::SPECIAL_ALL_ACCESS_MITRA) === 0)
+        ) {
             $mitra = collect([self::SPECIAL_ALL_ACCESS_MITRA])->merge($mitra)->values();
         }
 

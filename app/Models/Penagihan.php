@@ -109,6 +109,7 @@ class Penagihan extends Model
         'priority_updated_by',
         'estimasi_durasi_hari',
         'tanggal_mulai',
+        'timer_selesai_pada',
         'status',
         'tanggal_invoice',
         'tanggal_jatuh_tempo',
@@ -119,6 +120,7 @@ class Penagihan extends Model
         'tanggal_invoice' => 'date',
         'tanggal_jatuh_tempo' => 'date',
         'tanggal_mulai' => 'date',
+        'timer_selesai_pada' => 'datetime',
         'estimasi_durasi_hari' => 'integer',
         'rekon_nilai' => 'decimal:2',
         // Cast ke string saja (enum akan dihandle manual di accessor)

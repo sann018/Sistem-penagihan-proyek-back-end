@@ -34,7 +34,7 @@ Route::get('/super-admin-contact', [ProfileController::class, 'superAdminContact
 // ========================================
 // [\ud83d\udd10 AUTH_SYSTEM] PROTECTED ROUTES (Authentication Required)
 // ========================================
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'active'])->group(function () {
     // ========================================
     // [\ud83d\udd10 AUTH] Basic Auth Routes (All Authenticated Users)
     // ========================================
@@ -131,6 +131,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::put('/{id}', [PenagihanController::class, 'update']);
             Route::delete('/{id}', [PenagihanController::class, 'destroy']);
             Route::put('/{id}/prioritize', [PenagihanController::class, 'setPrioritize']);
+            Route::put('/{id}/timer-complete', [PenagihanController::class, 'setTimerComplete']);
         });
 
         // NOTE: wildcard {id} sudah dipindah ke group read-only di atas.

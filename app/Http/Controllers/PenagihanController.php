@@ -633,7 +633,11 @@ class PenagihanController extends Controller
      */
     public function destroy(Request $request, string $id): JsonResponse
     {
-        $penagihan = Penagihan::find($id);
+        // Route bisa mengirim PID (string). Pertahankan fallback untuk legacy numeric IDs.
+        $penagihan = Penagihan::where('pid', $id)->first();
+        if (!$penagihan) {
+            $penagihan = Penagihan::find($id);
+        }
 
         if (!$penagihan) {
             return response()->json([
@@ -645,6 +649,7 @@ class PenagihanController extends Controller
         // Store data before delete for audit
         $dataSebelum = $this->sanitizeDataForLog($penagihan->toArray());
         $namaProyek = $penagihan->nama_proyek;
+        $pid = $penagihan->pid;
         
         $penagihan->delete();
 
@@ -655,7 +660,7 @@ class PenagihanController extends Controller
             'delete',
             "Menghapus proyek: {$namaProyek}",
             'penagihan',
-            $id,
+            $pid,
             $dataSebelum,
             null
         );
@@ -821,6 +826,74 @@ class PenagihanController extends Controller
             'success' => true,
             'message' => $message,
             'data' => $this->addTimerInfo($freshData)
+        ]);
+    }
+
+    /**
+     * Tandai selesai (manual) untuk kebutuhan monitoring.
+     * Timer tetap berjalan; flag ini hanya penanda.
+     */
+    public function setTimerComplete(Request $request, string $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'selesai' => 'required|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $penagihan = Penagihan::find($id);
+
+        if (!$penagihan) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Proyek tidak ditemukan',
+            ], 404);
+        }
+
+        $selesai = (bool) $request->boolean('selesai');
+        $oldValue = $penagihan->timer_selesai_pada;
+
+        $penagihan->timer_selesai_pada = $selesai ? now() : null;
+        $penagihan->save();
+
+        // Log activity
+        if ($selesai) {
+            $this->logActivity(
+                $request,
+                'Tandai Selesai (Timer)',
+                'update',
+                "Menandai selesai proyek '{$penagihan->nama_proyek}' (timer tetap berjalan)",
+                'penagihan',
+                $penagihan->pid,
+                ['timer_selesai_pada' => $oldValue],
+                ['timer_selesai_pada' => $penagihan->timer_selesai_pada]
+            );
+        } else {
+            $this->logActivity(
+                $request,
+                'Batalkan Selesai (Timer)',
+                'update',
+                "Membatalkan tanda selesai proyek '{$penagihan->nama_proyek}' (timer tetap berjalan)",
+                'penagihan',
+                $penagihan->pid,
+                ['timer_selesai_pada' => $oldValue],
+                ['timer_selesai_pada' => null]
+            );
+        }
+
+        $fresh = $penagihan->fresh();
+        $fresh->prioritas_label = $this->getPrioritasLabel($fresh->prioritas);
+
+        return response()->json([
+            'success' => true,
+            'message' => $selesai ? 'Proyek berhasil ditandai selesai' : 'Tanda selesai berhasil dibatalkan',
+            'data' => $this->addTimerInfo($fresh),
         ]);
     }
 
@@ -1171,6 +1244,41 @@ class PenagihanController extends Controller
                 ], 400);
             }
             
+            // Log import activity (selalu 1 history, termasuk partial success)
+            $importedProjects = method_exists($import, 'getImportedProjects') ? $import->getImportedProjects() : [];
+            $detailSesudah = [
+                'total_imported' => $importedCount,
+                'before_count' => $beforeCount,
+                'after_count' => $afterCount,
+            ];
+
+            // Isi detail perubahan dengan semua Nama Proyek + PID
+            $i = 1;
+            foreach ($importedProjects as $proj) {
+                if (!is_array($proj)) {
+                    continue;
+                }
+                $pid = (string) ($proj['pid'] ?? '');
+                $nama = (string) ($proj['nama_proyek'] ?? '');
+                $line = trim($pid . ($nama !== '' ? " - {$nama}" : ''));
+                if ($line === '') {
+                    continue;
+                }
+                $detailSesudah['proyek_' . $i] = $line;
+                $i++;
+            }
+
+            $this->logActivity(
+                $request,
+                'Import Excel',
+                'import',
+                "Mengimport {$importedCount} data proyek dari file Excel",
+                'penagihan',
+                '',
+                [],
+                $detailSesudah
+            );
+
             // [📤 EXCEL_OPERATIONS] PARTIAL SUCCESS WITH WARNINGS
             if (!empty($duplicatePids) || !empty($detailedErrors)) {
                 $warnings = [];
@@ -1191,18 +1299,6 @@ class PenagihanController extends Controller
                     'detailed_errors' => $detailedErrors
                 ], 200);
             }
-
-            // Log import activity
-            $this->logActivity(
-                $request,
-                'Import Excel',
-                'import',
-                "Mengimport $importedCount data proyek dari file Excel",
-                'penagihan',
-                null,
-                null,
-                ['total_imported' => $importedCount, 'before_count' => $beforeCount, 'after_count' => $afterCount]
-            );
             
             return response()->json([
                 'success' => true,
@@ -1402,6 +1498,23 @@ class PenagihanController extends Controller
                 : "Menghapus SEMUA data proyek ({$totalCount} records)";
 
             // Log activity
+            $detailSesudah = [
+                'total_deleted' => $totalCount,
+                'exclude_prioritized' => $excludePrioritized,
+                'kept_count' => $keptCount,
+            ];
+            $i = 1;
+            foreach ($sampleData as $row) {
+                $pid = (string) ($row['pid'] ?? '');
+                $nama = (string) ($row['nama_proyek'] ?? '');
+                $line = trim($pid . ($nama !== '' ? " - {$nama}" : ''));
+                if ($line === '') {
+                    continue;
+                }
+                $detailSesudah['sample_' . $i] = $line;
+                $i++;
+            }
+
             $this->logActivity(
                 $request,
                 'Hapus Semua Proyek',
@@ -1409,13 +1522,8 @@ class PenagihanController extends Controller
                 $deleteMessage,
                 'penagihan',
                 null,
-                [
-                    'total_deleted' => $totalCount, 
-                    'exclude_prioritized' => $excludePrioritized,
-                    'kept_count' => $keptCount,
-                    'sample_data' => $sampleData
-                ],
-                null
+                [],
+                $detailSesudah
             );
 
             Log::warning("BULK DELETE: User {$request->user()->name} deleted {$totalCount} project records", [
@@ -1482,15 +1590,22 @@ class PenagihanController extends Controller
             }
 
             $totalCount = $dataToDelete->count();
-            
-            // Create sample for audit
-            $sampleData = $dataToDelete->take(5)->map(function ($item) {
-                return [
-                    'pid' => $item->pid,
-                    'nama_proyek' => $item->nama_proyek,
-                    'nama_mitra' => $item->nama_mitra
-                ];
-            })->toArray();
+
+            // Siapkan list proyek yang dihapus (PID + Nama Proyek) untuk ditampilkan di detail perubahan.
+            $detailSesudah = [
+                'total_deleted' => $totalCount,
+            ];
+            $i = 1;
+            foreach ($dataToDelete as $item) {
+                $pid = (string) ($item->pid ?? '');
+                $nama = (string) ($item->nama_proyek ?? '');
+                $line = trim($pid . ($nama !== '' ? " - {$nama}" : ''));
+                if ($line === '') {
+                    continue;
+                }
+                $detailSesudah['proyek_' . $i] = $line;
+                $i++;
+            }
 
             // Delete records
             Penagihan::whereIn('pid', $pids)->delete();
@@ -1503,12 +1618,8 @@ class PenagihanController extends Controller
                 "Menghapus {$totalCount} data proyek terpilih",
                 'penagihan',
                 null,
-                [
-                    'total_deleted' => $totalCount,
-                    'pids' => $pids,
-                    'sample_data' => $sampleData
-                ],
-                null
+                [],
+                $detailSesudah
             );
 
             Log::info("BULK DELETE SELECTED: User {$request->user()->name} deleted {$totalCount} selected records", [
