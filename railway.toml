@@ -1,0 +1,11 @@
+[build]
+# Build command jika tidak menggunakan Dockerfile
+# builder = "dockerfile"
+
+[deploy]
+startCommand = "php artisan migrate --force && php-fpm"
+healthcheckPath = "/api"
+healthcheckTimeout = 30
+
+[env]
+PORT = "8000"
