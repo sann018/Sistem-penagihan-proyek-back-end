@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use App\Models\User;
+use App\Services\ImageWebpService;
 use App\Traits\LogsActivity;
 use Illuminate\Validation\Rules\Password;
 
@@ -314,8 +315,23 @@ class ProfileController extends Controller
                 Storage::disk('public')->delete($user->foto);
             }
 
-            // Store new photo
-            $path = $request->file('photo')->store('profile-photos', 'public');
+            $uploaded = $request->file('photo');
+
+            // Prefer lightweight WebP for JPEG/PNG (smaller, faster to load).
+            // Safe fallback: if server doesn't support WebP/GD conversion, keep original behavior.
+            $path = null;
+            if ($uploaded) {
+                $webp = app(ImageWebpService::class)->convertToWebpBytes($uploaded, 512, 512, 80);
+                if (is_array($webp) && isset($webp['path'], $webp['bytes'])) {
+                    Storage::disk('public')->put($webp['path'], $webp['bytes']);
+                    $path = $webp['path'];
+                }
+            }
+
+            // Store original if WebP conversion was not possible
+            if (!$path) {
+                $path = $request->file('photo')->store('profile-photos', 'public');
+            }
 
             // Update user photo path
             $user->update([
